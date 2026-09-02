@@ -1,0 +1,39 @@
+# --- Ambiente Python ---
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.Python
+build/
+dist/
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- Dados (nunca versionar dados brutos/processados grandes) ---
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+
+# --- Kaggle ---
+kaggle.json
+.kaggle/
+
+# --- Relatórios gerados (imagens, artefatos de modelo) ---
+reports/*
+!reports/.gitkeep
+!reports/*.md
+*.pkl
+*.joblib
+
+# --- SO / editor ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# --- Variáveis de ambiente ---
+.env
