@@ -1,0 +1,23 @@
+# --- Manipulação e análise de dados ---
+pandas>=2.1
+numpy>=1.26
+
+# --- Machine Learning e avaliação estatística ---
+scikit-learn>=1.4
+imbalanced-learn>=0.12   # SMOTE, undersampling e afins (dataset desbalanceado)
+scipy>=1.11
+
+# --- Visualização ---
+matplotlib>=3.8
+seaborn>=0.13
+plotly>=5.20
+
+# --- Aplicação interativa (apresentação) ---
+streamlit>=1.38
+
+# --- Notebooks ---
+jupyter>=1.0
+notebook>=7.0
+
+# --- Download do dataset (opcional, via API do Kaggle) ---
+kaggle>=1.6
