@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from pipeline import get_pipeline
-from theme import CORAL, ELECTRIC_BLUE, MUTED, NAVY_LIGHT, apply_plotly_theme
+from theme import CORAL, ELECTRIC_BLUE, NAVY_LIGHT, apply_plotly_theme
 from src.models import percentile_rank
 
 V_COLUMNS = [f"V{i}" for i in range(1, 29)]

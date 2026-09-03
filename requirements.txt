@@ -21,3 +21,6 @@ notebook>=7.0
 
 # --- Download do dataset (opcional, via API do Kaggle) ---
 kaggle>=1.6
+
+# --- Testes ---
+pytest>=8.0
