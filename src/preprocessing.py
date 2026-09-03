@@ -54,6 +54,33 @@ def train_test_split_stratified(
     )
 
 
+def get_train_test_split(
+    df: pd.DataFrame,
+    test_size: float = 0.2,
+    random_state: int = 42,
+):
+    """Fonte única de verdade do split treino/teste do projeto.
+
+    Antes desta função, `app/pipeline.py` chamava `split_features_target` +
+    `train_test_split_stratified` de forma duplicada em `get_pipeline()`
+    (resultado final) e `get_cv_results()` (validação cruzada) — com o
+    mesmo `random_state`, o resultado já saía idêntico, mas a lógica de
+    montar o split estava escrita duas vezes. Agora os dois chamam só esta
+    função.
+
+    Deliberadamente NÃO escalona nem balanceia — só separa
+    features/alvo e faz o split estratificado. Cada consumidor decide o
+    que fazer depois de forma independente: o pipeline principal escala
+    uma vez sobre o treino completo; a validação cruzada escala de novo,
+    por fold, dentro de `cross_validate_models` — reusar um scaler daqui
+    para os dois casos misturaria essas duas responsabilidades.
+    """
+    X, y = split_features_target(df)
+    return train_test_split_stratified(
+        X, y, test_size=test_size, random_state=random_state
+    )
+
+
 def scale_amount_time(
     X_train: pd.DataFrame, X_test: pd.DataFrame
 ) -> tuple[pd.DataFrame, pd.DataFrame, StandardScaler]:

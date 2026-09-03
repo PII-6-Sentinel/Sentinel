@@ -22,7 +22,7 @@ for path in (PROJECT_ROOT, APP_DIR):
         sys.path.insert(0, str(path))
 
 from theme import inject_css  # noqa: E402
-from views import demo, eda, models_page, overview  # noqa: E402
+from views import demo, eda, models_page, overview, threshold_analysis  # noqa: E402
 
 st.set_page_config(
     page_title="Sentinel — Detecção de Anomalias",
@@ -35,6 +35,7 @@ PAGES = {
     "Visão Geral": overview,
     "Análise Exploratória": eda,
     "Comparação de Modelos": models_page,
+    "Análise de Threshold": threshold_analysis,
     "Demo ao Vivo": demo,
 }
 

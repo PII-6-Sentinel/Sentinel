@@ -165,35 +165,141 @@ streamlit run app/app.py
 ```
 
 Isso abre automaticamente uma aba no navegador em `http://localhost:8501`.
-Na primeira vez que a página **Comparação de Modelos** (ou **Demo ao Vivo**)
-é aberta, o app treina os três modelos — leva alguns segundos; depois disso
-fica em cache (`st.cache_resource`) e as trocas de página/filtro são
-instantâneas, sem retreinar nada.
+Na primeira vez que a página **Comparação de Modelos** (ou **Demo ao Vivo**,
+ou **Análise de Threshold**) é aberta, o app treina os três modelos — leva
+alguns segundos; depois disso fica em cache (`st.cache_resource`) e as
+trocas de página/filtro são instantâneas, sem retreinar nada.
 
-Quatro páginas, navegáveis pela barra lateral:
+Cinco páginas, navegáveis pela barra lateral:
 
 | Página | O que mostra |
 |---|---|
 | **Visão Geral** | Objetivo do projeto e resumo visual da análise SWOT/GUT |
 | **Análise Exploratória** | Distribuição de classes, `Amount` por classe e correlações — versão interativa do notebook |
-| **Comparação de Modelos** | Matriz de confusão, precisão, recall, F1 e curvas ROC dos 3 modelos lado a lado |
+| **Comparação de Modelos** | Matriz de confusão, precisão, recall, F1, curvas ROC/PR no conjunto de teste, e uma seção separada de validação cruzada (estabilidade dos modelos) |
+| **Análise de Threshold** | Simula, para qualquer um dos 3 modelos, como mudar o limiar de decisão altera precisão/recall/F1/matriz de confusão — sem retreinar nada |
 | **Demo ao Vivo** | Escolha uma transação real do conjunto de teste e veja a classificação de qualquer um dos 3 modelos na hora, com um gauge de score de risco |
 
-### Como o desbalanceamento é tratado em cada modelo (`src/models.py`)
+### Score, threshold e decisão (`src/models.py`)
 
-- **Baseline estatístico**: escore de anomalia = distância euclidiana ao
-  quadrado no espaço `V1`..`V28` (uma transação "típica" fica perto da
-  origem desse espaço); o limiar de corte é calibrado por percentil, sem
-  usar rótulos.
-- **Regressão Logística**: `class_weight="balanced"` — penaliza mais o erro
-  na classe minoritária (fraude), sem precisar reamostrar os dados.
-- **Isolation Forest**: não-supervisionado; `contamination` (proporção
-  esperada de anomalias, estimada do treino) calibra o limiar de decisão.
+Todo modelo segue o mesmo fluxo, em três passos deliberadamente separados:
 
-Essa escolha prioriza um app rápido de treinar/interagir. O SMOTE/undersampling
-implementado em [`src/preprocessing.py`](src/preprocessing.py) continua
-disponível e é o que o notebook de exploração usa como exemplo alternativo
-de tratamento de desbalanceamento.
+```
+fraud_score(modelo, X)  →  threshold  →  apply_threshold(score, threshold)  →  y_pred
+```
+
+Nenhum modelo decide "fraude ou não" sozinho via `model.predict()` — isso
+evitaria comparar os três de forma consistente, já que cada biblioteca tem
+sua própria convenção interna de corte. Em vez disso:
+
+- **`fraud_score()`** extrai um escore contínuo de qualquer modelo (maior =
+  mais suspeito), escondendo a API específica de cada um (probabilidade da
+  Regressão Logística, distância do baseline, escore de isolamento do
+  Isolation Forest).
+- **`calibrate_threshold_by_contamination()`** calcula um threshold default
+  a partir da taxa de fraude do **treino** — só para gerar um ponto de
+  operação comparável entre os três modelos nesta etapa acadêmica; não é
+  uma prática de produção (a taxa real de fraude não estaria disponível
+  com essa precisão fora de um dataset já rotulado).
+- **`apply_threshold()`** é a única função que transforma escore em decisão
+  0/1 — pura, sem depender de modelo.
+- **`evaluate_at_threshold()`** recalcula precisão/recall/F1/matriz de
+  confusão para qualquer threshold sobre o mesmo escore, sem retreinar
+  nada — a base para uma futura página de análise de threshold.
+
+Treino e calibração de threshold são etapas separadas: nenhum modelo é
+treinado usando a taxa real de fraude (o `IsolationForest` usa
+`contamination="auto"`, a heurística padrão do scikit-learn).
+
+O balanceamento via `class_weight="balanced"` (Regressão Logística) prioriza
+um app rápido de treinar/interagir. O SMOTE/undersampling implementado em
+[`src/preprocessing.py`](src/preprocessing.py) continua disponível e é o
+que o notebook de exploração usa como exemplo alternativo de tratamento de
+desbalanceamento.
+
+### Validação cruzada (`src/evaluation.py`)
+
+O projeto reporta dois resultados **diferentes e não-intercambiáveis**:
+
+- **Conjunto de teste final** (a maior parte da página "Comparação de
+  Modelos"): cada modelo é treinado UMA vez no treino completo e avaliado
+  UMA vez no teste, nunca visto antes — é o número que representa "o
+  desempenho do modelo".
+- **Validação cruzada** (seção separada, dentro de um expander): mede o
+  quão **estável** cada modelo é entre diferentes recortes do treino — não
+  substitui o teste final, complementa.
+
+A validação cruzada usa `StratifiedKFold(n_splits=5, shuffle=True,
+random_state=42)` — estratificado pelo mesmo motivo do split treino/teste
+(com ~0,17% de fraude, um fold não-estratificado corre risco real de ficar
+com poucas fraudes, ou nenhuma). Ela roda **inteiramente dentro do
+conjunto de treino**: o conjunto de teste final nunca é passado para
+`cross_validate_models()` — a função nem aceita esse parâmetro.
+
+Dentro de cada um dos 5 folds, na ordem certa para não vazar dados:
+
+1. um `StandardScaler` **novo** é ajustado só com o treino daquele fold
+   (nunca com o treino completo, e nunca com o validation do fold);
+2. os três modelos são treinados do zero nesse treino de fold;
+3. o threshold de cada modelo é calibrado usando só o escore do **treino
+   do fold**;
+4. esse threshold é aplicado ao **validation do fold** (nunca visto pelos
+   passos 1-3) para calcular as métricas daquele fold.
+
+Repetido 5 vezes, isso dá 5 medidas independentes de cada métrica por
+modelo — reportadas como `média ± desvio-padrão` na aplicação (nunca só a
+média sozinha, para não esconder o quanto os modelos variam entre folds).
+
+**Sobre o threshold (nos folds e no teste final):** ele representa um
+ponto de operação calibrado pela prevalência de fraude observada no
+conjunto de treinamento (ou, em cada fold, no treino daquele fold) — **não
+deve ser interpretado como conhecimento disponível em produção**, e não é
+uma probabilidade de fraude. Em produção, essa prevalência não estaria
+disponível com essa precisão; o threshold seria escolhido por critério de
+negócio.
+
+**Fonte única do split:** `get_pipeline()` (teste final) e
+`get_cv_results()` (validação cruzada) chamam os dois a mesma função,
+[`get_train_test_split()`](src/preprocessing.py) — antes cada um montava o
+split separadamente (mesmo resultado, já que usavam o mesmo
+`random_state`, mas com a lógica escrita duas vezes). Agora há um único
+lugar que decide como o dataset é dividido.
+
+### Análise de Threshold (`src/evaluation.py`, página "Análise de Threshold")
+
+Score e decisão são conceitos diferentes (ver "Score, threshold e decisão"
+acima) — esta página deixa isso literalmente manipulável: escolha um
+modelo e mova um slider de threshold para ver, em tempo real, como
+precisão/recall/F1/matriz de confusão mudam **sem retreinar nada**.
+
+Alguns pontos de design importantes:
+
+- **O slider é só uma simulação.** Mover o threshold na página nunca
+  altera o modelo, nunca altera o threshold "oficial" calibrado pelo
+  pipeline (o mesmo usado na página "Comparação de Modelos"), e nada é
+  persistido — trocar de página ou reabrir o app volta ao ponto de partida.
+- **A escala do slider é a escala nativa de cada modelo** — nunca 0 a 1
+  "assumido cegamente". Regressão Logística produz probabilidade (0-1),
+  mas o baseline estatístico (distância no espaço V1..V28) e o Isolation
+  Forest (escore de isolamento) usam escalas completamente diferentes;
+  `fraud_score()` (`src/models.py`) já garante que "maior = mais
+  suspeito" para os três, mas não uniformiza a escala — e esta página não
+  cria uma segunda normalização por cima disso, só usa a escala como ela é.
+- **AUC-ROC e AUC-PR não mudam com o slider** — são calculadas sobre o
+  ranking completo do escore, exibidas como referência fixa da qualidade
+  do modelo, ao lado (não misturadas) das métricas que de fato dependem
+  do threshold escolhido (precisão, recall, F1, FPR, TPR, specificity,
+  balanced accuracy, MCC).
+- **Nada é retreinado, nada de CV roda de novo.** A página parte do
+  resultado já cacheado de `get_pipeline()`; a única coisa recalculada a
+  cada movimento do slider é `calculate_metrics()` sobre o escore já
+  pronto — barato, não envolve o modelo. O gráfico "métrica × threshold"
+  usa uma varredura (`threshold_sweep()`) cacheada por modelo, para não
+  recalcular 100 pontos a cada tick do slider.
+- **Linguagem:** o Sentinel nunca afirma "fraude confirmada" — a decisão é
+  sempre "Normal" ou "Potencialmente suspeita". O escore não é uma
+  probabilidade de fraude calibrada; é um ranking de risco relativo,
+  usado para avaliação de risco transacional, não como veredito.
 
 ## 6. Metodologia de avaliação
 
@@ -204,7 +310,17 @@ do time com validação estatística, o projeto segue algumas regras fixas
 - **Nunca usar acurácia isolada como métrica de sucesso.** Com 99,83% das
   transações sendo legítimas, um modelo que nunca detecta fraude nenhuma
   ainda "acerta" 99,83% das vezes. Métricas usadas: matriz de confusão,
-  precisão, recall, F1-score e AUC-ROC/AUC-PR.
+  precisão, recall, F1-score, AUC-ROC e AUC-PR.
+- **AUC-PR ao lado de AUC-ROC.** Em datasets tão desbalanceados quanto este
+  (~0,17% de fraude), AUC-ROC tende a parecer otimista demais — a taxa de
+  falsos positivos é normalizada pelo tamanho da classe majoritária, então
+  um número grande de falsos positivos ainda resulta numa curva ROC
+  "bonita". AUC-PR (average precision) é mais sensível a isso.
+- **Threshold explícito, nunca escondido dentro do treino/predict** — ver
+  "Score, threshold e decisão" acima.
+- **Validação cruzada estratificada (5 folds), só no treino** — mede
+  estabilidade além do ponto único do teste final. Ver "Validação cruzada"
+  acima.
 - **Split estratificado** (`stratify=y`) para preservar a proporção de
   fraudes em treino e teste.
 - **Balanceamento (SMOTE/undersampling) aplicado só no treino**, depois do
@@ -213,10 +329,31 @@ do time com validação estatística, o projeto segue algumas regras fixas
 - **MVP antes de otimização:** um baseline estatístico simples (regras) roda
   de ponta a ponta antes de investir em ajuste fino de modelos de ML.
 
-## 7. Próximos passos
+## 7. Testes
+
+```bash
+pytest
+```
+
+Os testes (`tests/`) cobrem a camada de avaliação — separação entre escore
+e decisão, AUC-PR, thresholds inválidos, validação cruzada (5 folds,
+threshold calibrado só no treino do fold, resultado agregado com
+mean/std), a varredura de threshold (`threshold_sweep`) e que o
+`StandardScaler` nunca usa dados de teste/validation para se ajustar,
+inclusive através da função de split centralizada
+(`get_train_test_split`). Rodam sobre um dataset sintético pequeno (gerado
+em `tests/conftest.py`), não sobre `data/raw/creditcard.csv` — não é
+necessário ter o dataset baixado para rodar a suíte.
+
+## 8. Próximos passos
 
 - [x] Implementar o baseline estatístico, Regressão Logística e Isolation Forest (`src/models.py`).
 - [x] Aplicação interativa (Streamlit) para apresentação (`app/`).
+- [x] AUC-PR e separação explícita entre score e threshold (`src/models.py`).
+- [x] Validação cruzada estratificada, só no treino (`src/evaluation.py`).
+- [x] Fonte única do split treino/teste (`get_train_test_split`, `src/preprocessing.py`).
+- [x] Página de Análise de Threshold interativa (`app/views/threshold_analysis.py`).
+- [x] Testes unitários da camada de avaliação (`tests/`).
 - [ ] Rodar `01_exploracao.ipynb` com o dataset real e preencher a seção de conclusões.
-- [ ] Ajustar hiperparâmetros e comparar com balanceamento via SMOTE (não só `class_weight`/`contamination`).
+- [ ] Ajustar hiperparâmetros e comparar com balanceamento via SMOTE (não só `class_weight`).
 - [ ] Notebook comparativo formalizando as métricas das três abordagens (hoje só na aplicação).
