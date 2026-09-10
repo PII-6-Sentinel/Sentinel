@@ -22,5 +22,9 @@ notebook>=7.0
 # --- Download do dataset (opcional, via API do Kaggle) ---
 kaggle>=1.6
 
+# --- Domínio sintético (via de simulação operacional antifraude) ---
+sqlalchemy>=2.0   # ORM + SQLite, persistência do domínio sintético
+geopy>=2.4        # distância geodésica entre coordenadas, sem chamadas de rede
+
 # --- Testes ---
 pytest>=8.0
