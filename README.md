@@ -5,11 +5,16 @@ Projeto Integrador (TTI 304 — Gerenciamento de Projetos em TI) sobre
 estatísticas e de Machine Learning com foco em rigor metodológico de
 avaliação.
 
-O dataset usado é o [Credit Card Fraud Detection](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud)
-(Kaggle/ULB): ~284.807 transações, das quais apenas 492 (~0,17%) são fraudes.
-Esse desbalanceamento extremo é o maior risco técnico do projeto — veja
-[`docs/SWOT_GUT.md`](docs/SWOT_GUT.md) para a análise completa e as decisões
-de mitigação adotadas.
+O projeto opera em **duas vias complementares**: o dataset público
+[Credit Card Fraud Detection](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud)
+(Kaggle/ULB) — ~284.807 transações, das quais apenas 492 (~0,17%) são
+fraudes, usado para validação científica rigorosa dos modelos — e um
+**domínio sintético** (clientes, cartões, dispositivos, estabelecimentos),
+gerado de forma determinística e persistido em SQLite, que simula um
+ambiente antifraude operacional com contexto de negócio que o Kaggle não
+tem. Veja [`docs/SWOT_GUT.md`](docs/SWOT_GUT.md) para a análise de risco do
+projeto e [`docs/DOMINIO_SINTETICO.md`](docs/DOMINIO_SINTETICO.md) para a
+justificativa metodológica completa da via sintética.
 
 ## Estrutura do repositório
 
@@ -22,24 +27,33 @@ Sentinel/
 │   └── views/                  # uma página por módulo
 │       ├── overview.py         # Visão Geral
 │       ├── eda.py              # Análise Exploratória
-│       ├── models_page.py      # Comparação de Modelos
+│       ├── models_page.py      # Comparação de Modelos (+ validação cruzada)
+│       ├── threshold_analysis.py  # Análise de Threshold
 │       └── demo.py             # Demo ao Vivo
 ├── .streamlit/
 │   └── config.toml            # tema de cores nativo do Streamlit
 ├── data/
-│   ├── raw/          # dataset original (creditcard.csv) — não versionado
-│   └── processed/     # dados intermediários gerados pelos notebooks — não versionado
+│   ├── raw/          # dataset do Kaggle (creditcard.csv) — não versionado
+│   ├── processed/     # dados intermediários gerados pelos notebooks — não versionado
+│   └── synthetic/     # sentinel.db (gerado) — não versionado, reproduzível via seed
 ├── notebooks/
 │   └── 01_exploracao.ipynb
 ├── src/               # código reutilizável (importado por notebooks E pelo app)
 │   ├── data_loader.py
 │   ├── preprocessing.py
-│   └── models.py               # baseline estatístico, regressão logística, isolation forest
+│   ├── models.py               # baseline estatístico, regressão logística, isolation forest
+│   ├── evaluation.py            # validação cruzada, varredura de threshold
+│   └── synthetic/                # domínio sintético — independente do Kaggle
+│       ├── models.py             # ORM SQLAlchemy (Customer, Card, Device, Merchant, Transaction)
+│       ├── geo_reference.py      # cidades reais (lat/lon) + distância geodésica local
+│       └── generator.py          # gerador determinístico (perfis + 5 cenários de fraude)
 ├── scripts/
-│   └── download_dataset.py   # download automatizado via API do Kaggle
+│   ├── download_dataset.py   # download do Kaggle via API
+│   └── generate_mock_data.py # gera e persiste o domínio sintético
 ├── reports/           # figuras e relatórios gerados
 ├── docs/
-│   └── SWOT_GUT.md
+│   ├── SWOT_GUT.md
+│   └── DOMINIO_SINTETICO.md
 ├── requirements.txt
 └── README.md
 ```
@@ -301,7 +315,34 @@ Alguns pontos de design importantes:
   probabilidade de fraude calibrada; é um ranking de risco relativo,
   usado para avaliação de risco transacional, não como veredito.
 
-## 6. Metodologia de avaliação
+## 6. Domínio sintético (via de simulação operacional)
+
+Complementa o Kaggle com um domínio que tem contexto de negócio explícito
+(cliente, cartão, dispositivo, estabelecimento, geolocalização), gerado de
+forma determinística e persistido em SQLite via SQLAlchemy — nunca CSV
+solto. Justificativa metodológica completa, entidades, perfis
+comportamentais e os 5 cenários de fraude:
+[`docs/DOMINIO_SINTETICO.md`](docs/DOMINIO_SINTETICO.md).
+
+Para gerar (ou regenerar) o banco:
+
+```bash
+python scripts/generate_mock_data.py
+```
+
+Cria `data/synthetic/sentinel.db` com ~130 clientes e alguns milhares de
+transações (~3% marcadas como fraude, com o cenário que a justifica). Seed
+fixa (`--seed`, default 42) — rodar de novo produz exatamente o mesmo
+banco; use `--force` para sobrescrever um banco já existente, ou
+`--n-customers` para gerar um volume diferente.
+
+**Nesta etapa, este domínio só é gerado e persistido** — nenhum modelo
+(estatístico ou ML) roda sobre ele ainda, e não há página nova no app para
+ele. Isso é intencional: consumir esse banco (Risk Engine, Central de
+Transações) é uma etapa futura separada, para não misturar "construir o
+domínio" com "construir o que consome o domínio" numa mesma entrega.
+
+## 7. Metodologia de avaliação
 
 Como a maior fraqueza identificada na análise SWOT/GUT é a pouca experiência
 do time com validação estatística, o projeto segue algumas regras fixas
@@ -329,23 +370,31 @@ do time com validação estatística, o projeto segue algumas regras fixas
 - **MVP antes de otimização:** um baseline estatístico simples (regras) roda
   de ponta a ponta antes de investir em ajuste fino de modelos de ML.
 
-## 7. Testes
+## 8. Testes
 
 ```bash
 pytest
 ```
 
-Os testes (`tests/`) cobrem a camada de avaliação — separação entre escore
-e decisão, AUC-PR, thresholds inválidos, validação cruzada (5 folds,
-threshold calibrado só no treino do fold, resultado agregado com
-mean/std), a varredura de threshold (`threshold_sweep`) e que o
-`StandardScaler` nunca usa dados de teste/validation para se ajustar,
-inclusive através da função de split centralizada
-(`get_train_test_split`). Rodam sobre um dataset sintético pequeno (gerado
-em `tests/conftest.py`), não sobre `data/raw/creditcard.csv` — não é
-necessário ter o dataset baixado para rodar a suíte.
+50 testes, nenhum depende de dados baixados/gerados manualmente:
 
-## 8. Próximos passos
+- **Camada de avaliação (Kaggle)**: separação entre escore e decisão,
+  AUC-PR, thresholds inválidos, validação cruzada (5 folds, threshold
+  calibrado só no treino do fold, resultado agregado com mean/std), a
+  varredura de threshold (`threshold_sweep`) e que o `StandardScaler`
+  nunca usa dados de teste/validation para se ajustar — inclusive através
+  da função de split centralizada (`get_train_test_split`). Rodam sobre um
+  dataset sintético **no formato do Kaggle** gerado em `tests/conftest.py`
+  (não confundir com o domínio sintético abaixo), não sobre
+  `data/raw/creditcard.csv`.
+- **Domínio sintético** (`tests/test_synthetic_data.py`): volume de
+  clientes/transações dentro do esperado, taxa de fraude na faixa (~3%),
+  nenhuma `distance_from_home_km` negativa, que toda transação
+  `viagem_impossivel` realmente viola 900 km/h, geração determinística
+  (mesma seed = mesmo dataset) e persistência em SQLite `:memory:` — nunca
+  o `data/synthetic/sentinel.db` real.
+
+## 9. Próximos passos
 
 - [x] Implementar o baseline estatístico, Regressão Logística e Isolation Forest (`src/models.py`).
 - [x] Aplicação interativa (Streamlit) para apresentação (`app/`).
@@ -353,7 +402,9 @@ necessário ter o dataset baixado para rodar a suíte.
 - [x] Validação cruzada estratificada, só no treino (`src/evaluation.py`).
 - [x] Fonte única do split treino/teste (`get_train_test_split`, `src/preprocessing.py`).
 - [x] Página de Análise de Threshold interativa (`app/views/threshold_analysis.py`).
-- [x] Testes unitários da camada de avaliação (`tests/`).
+- [x] Domínio sintético gerado e persistido em SQLite (`src/synthetic/`, `docs/DOMINIO_SINTETICO.md`).
+- [x] Testes unitários da camada de avaliação e do domínio sintético (`tests/`).
 - [ ] Rodar `01_exploracao.ipynb` com o dataset real e preencher a seção de conclusões.
+- [ ] Risk Engine consumindo o domínio sintético (etapa futura, ainda não iniciada).
 - [ ] Ajustar hiperparâmetros e comparar com balanceamento via SMOTE (não só `class_weight`).
 - [ ] Notebook comparativo formalizando as métricas das três abordagens (hoje só na aplicação).

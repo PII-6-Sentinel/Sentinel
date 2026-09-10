@@ -18,6 +18,10 @@ data/raw/*
 data/processed/*
 !data/processed/.gitkeep
 
+# --- Domínio sintético: banco gerado (reproduzível via seed fixa, não versionado) ---
+data/synthetic/*.db
+!data/synthetic/.gitkeep
+
 # --- Kaggle ---
 kaggle.json
 .kaggle/
