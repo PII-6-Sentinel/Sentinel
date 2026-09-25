@@ -46,7 +46,9 @@ Sentinel/
 │   └── synthetic/                # domínio sintético — independente do Kaggle
 │       ├── models.py             # ORM SQLAlchemy (Customer, Card, Device, Merchant, Transaction)
 │       ├── geo_reference.py      # cidades reais (lat/lon) + distância geodésica local
-│       └── generator.py          # gerador determinístico (perfis + 5 cenários de fraude)
+│       ├── generator.py          # gerador determinístico (perfis + 6 cenários de fraude)
+│       ├── features.py           # features comportamentais (funções puras)
+│       └── feature_pipeline.py   # build_feature_table(session): banco -> DataFrame
 ├── scripts/
 │   ├── download_dataset.py   # download do Kaggle via API
 │   └── generate_mock_data.py # gera e persiste o domínio sintético
@@ -321,7 +323,7 @@ Complementa o Kaggle com um domínio que tem contexto de negócio explícito
 (cliente, cartão, dispositivo, estabelecimento, geolocalização), gerado de
 forma determinística e persistido em SQLite via SQLAlchemy — nunca CSV
 solto. Justificativa metodológica completa, entidades, perfis
-comportamentais e os 5 cenários de fraude:
+comportamentais e os 6 cenários de fraude:
 [`docs/DOMINIO_SINTETICO.md`](docs/DOMINIO_SINTETICO.md).
 
 Para gerar (ou regenerar) o banco:
@@ -376,7 +378,7 @@ do time com validação estatística, o projeto segue algumas regras fixas
 pytest
 ```
 
-50 testes, nenhum depende de dados baixados/gerados manualmente:
+95 testes, nenhum depende de dados baixados/gerados manualmente:
 
 - **Camada de avaliação (Kaggle)**: separação entre escore e decisão,
   AUC-PR, thresholds inválidos, validação cruzada (5 folds, threshold
@@ -387,6 +389,9 @@ pytest
   dataset sintético **no formato do Kaggle** gerado em `tests/conftest.py`
   (não confundir com o domínio sintético abaixo), não sobre
   `data/raw/creditcard.csv`.
+- **Features comportamentais** (`tests/test_features.py`): cada feature com
+  casos simples, primeira transação de cada cliente sem `NaN`, e
+  `is_impossible_travel` verdadeiro em `viagem_impossivel`.
 - **Domínio sintético** (`tests/test_synthetic_data.py`): volume de
   clientes/transações dentro do esperado, taxa de fraude na faixa (~3%),
   nenhuma `distance_from_home_km` negativa, que toda transação
@@ -405,6 +410,7 @@ pytest
 - [x] Domínio sintético gerado e persistido em SQLite (`src/synthetic/`, `docs/DOMINIO_SINTETICO.md`).
 - [x] Testes unitários da camada de avaliação e do domínio sintético (`tests/`).
 - [ ] Rodar `01_exploracao.ipynb` com o dataset real e preencher a seção de conclusões.
-- [ ] Risk Engine consumindo o domínio sintético (etapa futura, ainda não iniciada).
+- [x] Features comportamentais sobre o domínio sintético (`src/synthetic/features.py`).
+- [ ] Risk Engine consumindo a tabela de features (etapa futura, ainda não iniciada).
 - [ ] Ajustar hiperparâmetros e comparar com balanceamento via SMOTE (não só `class_weight`).
 - [ ] Notebook comparativo formalizando as métricas das três abordagens (hoje só na aplicação).

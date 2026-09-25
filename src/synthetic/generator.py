@@ -21,7 +21,7 @@ from __future__ import annotations
 import random
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
@@ -100,6 +100,13 @@ class _CustomerBundle:
     devices: list[Device]
     transactions: list[Transaction] = field(default_factory=list)
     traveler_cities: list[CityRef] = field(default_factory=list)
+    # Só viajantes: (dia, cidade onde o cliente ESTÁ naquele dia), a partir
+    # do itinerário. Vazio para os demais perfis (sempre na cidade natal).
+    visit_days: list[tuple[date, CityRef]] = field(default_factory=list)
+    # Dispositivos criados pelo cenário "dispositivo_novo": ficam FORA de
+    # `devices` de propósito, para que nenhuma outra transação (normal ou
+    # de outro cenário) sorteie um deles e estrague o "nunca apareceu antes".
+    extra_devices: list[Device] = field(default_factory=list)
 
 
 @dataclass
@@ -228,28 +235,41 @@ def _build_merchants(rng: random.Random) -> list[Merchant]:
 # ---------------------------------------------------------------------------
 
 
-def _random_timestamp(rng: random.Random, customer: Customer, reference_end: datetime) -> datetime:
-    days_ago = rng.uniform(0.0, HISTORY_DAYS)
-    base_day = (reference_end - timedelta(days=days_ago)).date()
+def _timestamp_on_day(rng: random.Random, customer: Customer, base_day: date) -> datetime:
+    """Horário aleatório, dentro da janela típica do cliente, num dia dado."""
     hour_float = rng.uniform(customer.typical_hour_start, customer.typical_hour_end)
     hour = int(hour_float)
     minute = int((hour_float - hour) * 60)
     return datetime(base_day.year, base_day.month, base_day.day, hour, minute)
 
 
+def _random_timestamp(rng: random.Random, customer: Customer, reference_end: datetime) -> datetime:
+    days_ago = rng.uniform(0.0, HISTORY_DAYS)
+    base_day = (reference_end - timedelta(days=days_ago)).date()
+    return _timestamp_on_day(rng, customer, base_day)
+
+
 def _random_amount(rng: random.Random, customer: Customer) -> float:
     return max(5.0, rng.gauss(customer.avg_amount_baseline, customer.avg_amount_baseline * 0.35))
 
 
-def _pick_normal_city(rng: random.Random, bundle: _CustomerBundle) -> CityRef:
-    customer = bundle.customer
-    if (
-        customer.behavior_profile == BehaviorProfile.VIAJANTE
-        and bundle.traveler_cities
-        and rng.random() < 0.35
-    ):
-        return rng.choice(bundle.traveler_cities)
-    return CITY_BY_NAME[customer.home_city]
+def _day_of(reference_end: datetime, day_index: int) -> date:
+    """Índice de dia (0 = primeiro dia do histórico) -> data."""
+    return (reference_end - timedelta(days=HISTORY_DAYS - day_index)).date()
+
+
+def _sample_visit_day(
+    rng: random.Random, bundle: _CustomerBundle, reference_end: datetime
+) -> tuple[CityRef, date]:
+    """(cidade, dia) coerentes com ONDE o cliente está: viajantes seguem o
+    itinerário; os demais estão sempre na cidade natal.
+    """
+    if bundle.visit_days:
+        day, city = rng.choice(bundle.visit_days)
+        return city, day
+    days_ago = rng.uniform(0.0, HISTORY_DAYS)
+    home = CITY_BY_NAME[bundle.customer.home_city]
+    return home, (reference_end - timedelta(days=days_ago)).date()
 
 
 def _make_transaction(
@@ -278,6 +298,57 @@ def _make_transaction(
     )
 
 
+@dataclass(frozen=True)
+class Stay:
+    """Uma estadia contínua numa cidade: do dia `first_day` ao `last_day`
+    (índices de dia do histórico, inclusivos).
+    """
+
+    city: CityRef
+    first_day: int
+    last_day: int
+
+
+# Dias inteiros SEM transações entre o fim de uma estadia e o começo da
+# próxima (o "deslocamento"). Com 1 dia vazio, a folga mínima entre a última
+# transação de uma estadia e a primeira da seguinte é de ~25h (transações
+# só ocorrem entre 6h e 23h) — até a maior distância possível na Terra
+# (~20.000 km) fica abaixo de ~800 km/h, ou seja, nunca viola o limiar de
+# 900 km/h por construção, seja qual for o par de cidades.
+MIN_GAP_DAYS_BETWEEN_STAYS = 1
+
+
+def build_itinerary(
+    rng: random.Random,
+    home: CityRef,
+    traveler_cities: list[CityRef],
+    total_days: int = HISTORY_DAYS,
+) -> list[Stay]:
+    """Sequência de estadias contínuas do cliente viajante, do primeiro ao
+    último dia do histórico. Começa em casa; em casa fica de 1 a 4 semanas;
+    fora, de 3 a 14 dias; ao sair de uma cidade "de viagem", volta para casa
+    (50%) ou vai para outra cidade que ele conhece.
+    """
+    known = [home, *traveler_cities]
+    stays: list[Stay] = []
+    cursor = 0
+    current = home
+
+    while cursor < total_days:
+        length = rng.randint(7, 28) if current.city == home.city else rng.randint(3, 14)
+        last = min(cursor + length - 1, total_days - 1)
+        stays.append(Stay(city=current, first_day=cursor, last_day=last))
+        cursor = last + 1 + MIN_GAP_DAYS_BETWEEN_STAYS
+
+        if current.city == home.city:
+            current = rng.choice(traveler_cities)
+        else:
+            others = [c for c in known if c.city != current.city]
+            current = home if rng.random() < 0.5 else rng.choice(others)
+
+    return stays
+
+
 def _build_customer_bundles(
     rng: random.Random,
     n_customers: int,
@@ -300,17 +371,34 @@ def _build_customer_bundles(
             customer=customer, cards=cards, devices=devices, traveler_cities=traveler_cities
         )
 
+        if profile == BehaviorProfile.VIAJANTE:
+            itinerary = build_itinerary(rng, CITY_BY_NAME[customer.home_city], traveler_cities)
+            bundle.visit_days = [
+                (_day_of(reference_end, d), stay.city)
+                for stay in itinerary
+                for d in range(stay.first_day, stay.last_day + 1)
+            ]
+
         # Cliente novo tem pouco histórico por definição; os demais perfis
         # acumulam um histórico "normal" de tamanho comparável.
         n_normal = (
             rng.randint(8, 15) if profile == BehaviorProfile.NOVO_CLIENTE else rng.randint(30, 80)
         )
+        used_minutes: set[datetime] = set()
         for _ in range(n_normal):
-            city_ref = _pick_normal_city(rng, bundle)
+            city_ref, day = _sample_visit_day(rng, bundle, reference_end)
+            # Minuto único por cliente: dois estabelecimentos no MESMO minuto
+            # (a até ~15 km um do outro) implicariam ~900 km/h — um falso
+            # positivo de "viagem impossível" que não é comportamento real.
+            for _attempt in range(10):
+                timestamp = _timestamp_on_day(rng, customer, day)
+                if timestamp not in used_minutes:
+                    break
+            used_minutes.add(timestamp)
+
             merchant = rng.choice(merchants_by_city[city_ref.city])
             card = rng.choice(cards)
             device = rng.choice(devices)
-            timestamp = _random_timestamp(rng, customer, reference_end)
             amount = _random_amount(rng, customer)
             bundle.transactions.append(
                 _make_transaction(customer, card, device, merchant, timestamp, amount)
@@ -416,11 +504,11 @@ def inject_atypical_amount(
     um limiar fixo global).
     """
     customer = bundle.customer
-    city_ref = CITY_BY_NAME[customer.home_city]
+    city_ref, day = _sample_visit_day(rng, bundle, reference_end)
     merchant = rng.choice(merchants_by_city[city_ref.city])
     card = rng.choice(bundle.cards)
     device = rng.choice(bundle.devices)
-    timestamp = _random_timestamp(rng, customer, reference_end)
+    timestamp = _timestamp_on_day(rng, customer, day)
     amount = customer.avg_amount_baseline * rng.uniform(6.0, 15.0)
     return _make_transaction(
         customer, card, device, merchant, timestamp, amount,
@@ -438,7 +526,7 @@ def inject_atypical_hour(
     valor normais.
     """
     customer = bundle.customer
-    city_ref = CITY_BY_NAME[customer.home_city]
+    city_ref, day = _sample_visit_day(rng, bundle, reference_end)
     merchant = rng.choice(merchants_by_city[city_ref.city])
     card = rng.choice(bundle.cards)
     device = rng.choice(bundle.devices)
@@ -447,9 +535,7 @@ def inject_atypical_hour(
     candidate_hours = [h for h in range(24) if h not in excluded]
     hour = rng.choice(candidate_hours) if candidate_hours else (customer.typical_hour_start + 12) % 24
     minute = rng.randint(0, 59)
-    days_ago = rng.uniform(0.0, HISTORY_DAYS)
-    base_day = (reference_end - timedelta(days=days_ago)).date()
-    timestamp = datetime(base_day.year, base_day.month, base_day.day, hour, minute)
+    timestamp = datetime(day.year, day.month, day.day, hour, minute)
 
     amount = _random_amount(rng, customer)
     return _make_transaction(
@@ -491,18 +577,57 @@ def inject_combined_signals(
     )
 
 
+def inject_new_device(
+    rng: random.Random,
+    bundle: _CustomerBundle,
+    merchants_by_city: dict[str, list[Merchant]],
+    reference_end: datetime,
+) -> Transaction | None:
+    """Transação com um dispositivo que NUNCA apareceu no histórico do
+    cliente e que não é confiável (`Device.is_trusted = False`) — cidade,
+    valor e horário normais, só o dispositivo destoa.
+
+    O dispositivo é criado aqui, com `first_seen_at` igual ao horário da
+    própria transação, e guardado em `bundle.extra_devices` (fora de
+    `bundle.devices`): assim nenhuma outra transação o sorteia, e ele
+    aparece exatamente uma vez — nesta.
+    """
+    customer = bundle.customer
+    city_ref, day = _sample_visit_day(rng, bundle, reference_end)
+    merchant = rng.choice(merchants_by_city[city_ref.city])
+    card = rng.choice(bundle.cards)
+    timestamp = _timestamp_on_day(rng, customer, day)
+    amount = _random_amount(rng, customer)
+
+    device = Device(
+        customer=customer,
+        device_type=rng.choices(
+            [DeviceType.MOBILE, DeviceType.DESKTOP, DeviceType.POS], weights=[0.7, 0.2, 0.1]
+        )[0],
+        first_seen_at=timestamp,
+        is_trusted=False,
+    )
+    bundle.extra_devices.append(device)
+
+    return _make_transaction(
+        customer, card, device, merchant, timestamp, amount,
+        is_fraud=True, fraud_scenario=FraudScenario.DISPOSITIVO_NOVO.value,
+    )
+
+
 _INJECTORS = {
     FraudScenario.ANOMALIA_GEOGRAFICA: inject_geo_anomaly,
     FraudScenario.VIAGEM_IMPOSSIVEL: inject_impossible_travel,
     FraudScenario.VALOR_ATIPICO: inject_atypical_amount,
     FraudScenario.HORARIO_ATIPICO: inject_atypical_hour,
     FraudScenario.COMBINACAO_DE_SINAIS: inject_combined_signals,
+    FraudScenario.DISPOSITIVO_NOVO: inject_new_device,
 }
 
 
 def _target_fraud_counts(total_normal: int) -> dict[FraudScenario, int]:
     """Divide a meta de ~3% de fraude o mais igualmente possível entre os
-    5 cenários (resto distribuído nos primeiros cenários da lista).
+    6 cenários (resto distribuído nos primeiros cenários da lista).
     """
     target_total = round(total_normal * FRAUD_RATE_TARGET / (1 - FRAUD_RATE_TARGET))
     scenarios = list(FraudScenario)
@@ -560,7 +685,7 @@ def generate_dataset(
     return GeneratedDataset(
         customers=[b.customer for b in bundles],
         cards=[c for b in bundles for c in b.cards],
-        devices=[d for b in bundles for d in b.devices],
+        devices=[d for b in bundles for d in [*b.devices, *b.extra_devices]],
         merchants=merchants,
         transactions=[t for b in bundles for t in b.transactions],
     )
