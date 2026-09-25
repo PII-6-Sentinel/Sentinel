@@ -143,3 +143,60 @@ diretamente por que o projeto compara regras com Machine Learning.
 - Esta etapa gera e persiste os dados — nenhum modelo (estatístico ou ML)
   roda sobre este domínio ainda. Isso é intencional: o Risk Engine que vai
   consumir este banco é uma etapa futura separada.
+
+## Camada de features comportamentais (Etapa 6)
+
+`src/synthetic/features.py` (funções puras) e
+`src/synthetic/feature_pipeline.py` (`build_feature_table(session)`)
+transformam as transações do banco em uma tabela de features — uma linha
+por transação, mais `is_fraud` e `fraud_scenario`. Nenhuma decisão de risco
+acontece aqui; o Risk Engine (etapa futura) consome esta tabela em regras
+e/ou modelos.
+
+| Feature | Definição |
+|---|---|
+| `amount_deviation` | `(valor - média do cliente) / média do cliente`, com sinal. Relativa ao PRÓPRIO cliente (R$ 3.000 é ~0 para um `alto_gasto` e ~+30 para um `fixo` de média R$ 100) |
+| `location_distance` | `distance_from_home_km` em escala log, normalizado para [0, 1] (referência fixa de 20.000 km) |
+| `unusual_hour` | Distância circular (h) até a janela típica do cliente, dividida por 12; 0 dentro da janela |
+| `new_device` | O dispositivo nunca apareceu antes no histórico do cliente (primeira transação do cliente: sempre True) |
+| `implied_speed_kmh` / `is_impossible_travel` | km/h entre duas transações consecutivas do cliente (`geopy.geodesic`); impossível se > 900 km/h, o mesmo limiar do gerador. Primeira transação do cliente: 0.0 / False, explicitamente |
+
+Duas decisões que valem registrar:
+
+- `amount_deviation` usa diferença relativa e não z-score porque `Customer`
+  guarda só a média; derivar um desvio-padrão das constantes do gerador
+  vazaria o mecanismo de geração para dentro da feature.
+- Timestamps têm resolução de minuto, então duas transações no mesmo
+  minuto têm delta 0. `implied_travel_speed` aplica um piso de 1 minuto no
+  delta (sem ele a velocidade seria infinita até para dois estabelecimentos
+  a poucos km).
+
+### O que as features mostram (banco com seed 42)
+
+| Feature | Média (normal) | Média (fraude) | Leitura |
+|---|---|---|---|
+| `amount_deviation` | -0,004 | 2,240 | Separa bem (valor_atípico: 8,7; combinação: 2,6) |
+| `location_distance` | 0,214 | 0,526 | Separa bem (geográfica/viagem/combinação: ~0,75-0,77) |
+| `unusual_hour` | 0,000 | 0,128 | Separa, mas só em 2 dos 5 cenários |
+| `new_device` | 0,025 | 0,025 | **Sem sinal** — ver abaixo |
+| `implied_speed_kmh` | 140 | 508 | Separa; viagem_impossível: 1.814 |
+| `is_impossible_travel` | 1,7% | 24,3% | Pega 100% de `viagem_impossivel`, mas com falsos positivos — ver abaixo |
+
+**`new_device` não discrimina nada.** O gerador escolhe o dispositivo de
+cada transação ao acaso entre os do cliente, inclusive nas fraudes — não
+existe nenhum cenário de fraude "dispositivo novo". A feature está
+correta; o que falta é um cenário no gerador que a exercite (ou
+`Device.is_trusted`, que já existe e ainda não é usada).
+
+**`is_impossible_travel` tem falsos positivos concentrados em viajantes.**
+108 transações normais são marcadas (1,7%), 102 delas de clientes
+`viajante` (5,9% das deles): o gerador sorteia a cidade de cada transação
+normal do viajante de forma independente, sem continuidade temporal — duas
+compras a poucas horas em cidades a 1.000+ km "acontecem" sem viagem
+entre elas. É uma limitação do gerador, não da feature; regras que usem
+`is_impossible_travel` sozinha vão acusar viajantes legítimos.
+
+`unusual_hour` é exatamente 0 para toda transação normal — também um
+artefato do gerador (transações normais nunca saem da janela do cliente).
+Em dados reais, clientes saem da própria janela de vez em quando, e a
+separação seria menos limpa.
