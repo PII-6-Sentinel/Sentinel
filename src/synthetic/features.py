@@ -106,15 +106,21 @@ def unusual_hour(transaction: Any, customer: Any) -> float:
 
 
 def new_device_flag(transaction: Any, seen_device_ids: Collection[int]) -> bool:
-    """True se o dispositivo da transação NUNCA apareceu antes, no histórico
-    daquele cliente.
+    """True se o dispositivo da transação NUNCA apareceu antes no histórico
+    do cliente — MAS só quando já existe algum histórico.
 
     `seen_device_ids` = dispositivos dos quais o cliente já tem transação
-    ANTERIOR a esta (quem monta a tabela é que mantém esse conjunto,
-    cliente a cliente, em ordem cronológica — ver feature_pipeline). Sem
-    histórico nenhum (conjunto vazio), qualquer dispositivo é "novo":
-    é literalmente a primeira vez que aparece.
+    ANTERIOR a esta (quem monta a tabela mantém esse conjunto, cliente a
+    cliente, em ordem cronológica — ver feature_pipeline).
+
+    Sem histórico nenhum (conjunto vazio = primeira transação do cliente)
+    devolve False: "nunca vi esse dispositivo porque nunca vi nada" não é o
+    mesmo sinal que "dispositivo novo depois de um histórico estabelecido".
+    Sem essa regra, a primeira transação de todo cliente seria marcada como
+    dispositivo novo, um positivo sem nenhuma informação.
     """
+    if not seen_device_ids:
+        return False
     return transaction.device_id not in seen_device_ids
 
 

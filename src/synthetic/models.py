@@ -54,7 +54,7 @@ class DeviceType(str, enum.Enum):
 
 
 class FraudScenario(str, enum.Enum):
-    """Os 5 cenários de fraude injetados pelo gerador — ver
+    """Os 6 cenários de fraude injetados pelo gerador — ver
     docs/DOMINIO_SINTETICO.md para a descrição de cada um.
     """
 
@@ -63,6 +63,7 @@ class FraudScenario(str, enum.Enum):
     VALOR_ATIPICO = "valor_atipico"
     HORARIO_ATIPICO = "horario_atipico"
     COMBINACAO_DE_SINAIS = "combinacao_de_sinais"
+    DISPOSITIVO_NOVO = "dispositivo_novo"
 
 
 class Customer(Base):

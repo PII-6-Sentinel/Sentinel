@@ -84,7 +84,7 @@ estranha em relação ao padrão do PRÓPRIO cliente, não a um limiar global.
 | Perfil | % dos clientes | Comportamento normal |
 |---|---|---|
 | `fixo` | ~50% | Transações concentradas na cidade natal; valor e horário estáveis |
-| `viajante` | ~25% | Além da cidade natal, tem um conjunto pessoal de 2-3 cidades que visita com frequência — transações nessas cidades são NORMAIS para este cliente, não anomalias |
+| `viajante` | ~25% | Além da cidade natal, conhece 2-3 outras cidades. Segue um **itinerário em blocos contínuos**: fica de 1 a 4 semanas em casa, viaja para uma cidade que conhece e fica de 3 a 14 dias, depois volta para casa ou vai para outra. Entre duas estadias há sempre 1 dia inteiro sem transações (o deslocamento). Transações nessas cidades são NORMAIS para este cliente, não anomalias |
 | `alto_gasto` | ~15% | Mesmo padrão geográfico de um cliente fixo, mas com valor médio de referência bem mais alto (R$500–3.000 vs. R$50–300) |
 | `novo_cliente` | ~10% | Poucas transações no histórico (8-15, contra 30-80 dos demais) — ainda não tem um padrão bem estabelecido |
 
@@ -92,7 +92,7 @@ estranha em relação ao padrão do PRÓPRIO cliente, não a um limiar global.
 
 Cada transação fraudulenta carrega o campo `fraud_scenario` explicando por
 que foi marcada — nunca "fraude" sem justificativa. Meta: ~3% das
-transações totais, dividida o mais igualmente possível entre os 5
+transações totais, dividida o mais igualmente possível entre os 6
 cenários.
 
 ### 1. Anomalia geográfica (`anomalia_geografica`)
@@ -126,16 +126,48 @@ Três sinais **moderados** ao mesmo tempo — cidade incomum (mas não
 necessariamente nunca visitada), valor de 2,5x a 4,5x a média (bem menos
 extremo que o cenário 3) e horário um pouco fora da janela típica (menos
 extremo que o cenário 4). Nenhum sinal isolado seria extremo o bastante
-para disparar os outros 4 cenários — é o cenário desenhado para ser mais
+para disparar os cenários de sinal único — é o cenário desenhado para ser mais
 difícil de capturar com uma única regra estatística simples, motivando
 diretamente por que o projeto compara regras com Machine Learning.
 
+### 6. Dispositivo novo (`dispositivo_novo`)
+Transação feita com um dispositivo que **nunca apareceu** no histórico do
+cliente e que não é confiável (`Device.is_trusted = False`). O dispositivo
+é criado junto com a transação (`first_seen_at` = horário dela) e nenhuma
+outra transação o usa — então, em ordem cronológica, esta é a primeira e
+única vez que ele aparece. Cidade, valor e horário permanecem normais (e,
+para viajantes, coerentes com a cidade onde o cliente está naquele dia): só
+o dispositivo destoa.
+
+## Como o itinerário do viajante evita "teletransporte"
+
+Na primeira versão do gerador, a cidade de cada transação normal de um
+viajante era sorteada de forma independente — o cliente "aparecia" em
+cidades a 1.000+ km de distância com poucas horas de intervalo, e 5,9% dos
+viajantes legítimos eram marcados como viagem impossível pela feature
+`is_impossible_travel`. Agora o cliente permanece numa cidade por um bloco
+contínuo de dias e só então "viaja".
+
+A garantia é por construção, não por sorte: entre a última transação de uma
+estadia e a primeira da seguinte há sempre pelo menos 1 dia inteiro vazio.
+Como transações só ocorrem entre 6h e 23h, a folga mínima é de ~25h — e até
+a maior distância possível na Terra (~20.000 km) fica abaixo de ~800 km/h,
+sempre abaixo do limiar de 900 km/h, para qualquer par de cidades. Os
+cenários de fraude de sinal único (valor, horário, dispositivo) também
+respeitam o itinerário: acontecem na cidade onde o cliente está naquele dia,
+não na cidade natal por padrão.
+
+Transações normais de um mesmo cliente também nunca dividem o mesmo minuto:
+dois estabelecimentos da mesma cidade (a até ~15 km um do outro) no mesmo
+minuto implicariam ~900 km/h — um falso positivo que não é comportamento
+real.
+
 ## Limitações conhecidas (documentadas de propósito)
 
-- O relacionamento entre cidades "frequentadas" por um cliente `viajante`
-  e a lista de cidades candidatas para os cenários de fraude é uma
-  aproximação — em um sistema real, esse padrão emergiria dos dados
-  históricos do próprio cliente, não seria definido na geração.
+- As cidades que um `viajante` conhece são sorteadas na geração e o
+  itinerário é uma cadeia simples (casa -> viagem -> casa ou outra
+  viagem). Em um sistema real, esse padrão emergiria dos dados históricos do
+  próprio cliente, com sazonalidade (férias, feriados) que aqui não existe.
 - A distribuição de valores usa uma normal truncada (`random.gauss`, piso
   em R$ 5) por simplicidade; gastos reais tendem a ter cauda mais longa
   (distribuição log-normal), como já observado na análise exploratória do
@@ -158,7 +190,7 @@ e/ou modelos.
 | `amount_deviation` | `(valor - média do cliente) / média do cliente`, com sinal. Relativa ao PRÓPRIO cliente (R$ 3.000 é ~0 para um `alto_gasto` e ~+30 para um `fixo` de média R$ 100) |
 | `location_distance` | `distance_from_home_km` em escala log, normalizado para [0, 1] (referência fixa de 20.000 km) |
 | `unusual_hour` | Distância circular (h) até a janela típica do cliente, dividida por 12; 0 dentro da janela |
-| `new_device` | O dispositivo nunca apareceu antes no histórico do cliente (primeira transação do cliente: sempre True) |
+| `new_device` | O dispositivo nunca apareceu antes no histórico do cliente — mas só quando JÁ existe histórico: na primeira transação do cliente é `False` ("nunca vi esse dispositivo porque nunca vi nada" não é o mesmo sinal que "dispositivo novo depois de um histórico estabelecido") |
 | `implied_speed_kmh` / `is_impossible_travel` | km/h entre duas transações consecutivas do cliente (`geopy.geodesic`); impossível se > 900 km/h, o mesmo limiar do gerador. Primeira transação do cliente: 0.0 / False, explicitamente |
 
 Duas decisões que valem registrar:
@@ -171,32 +203,45 @@ Duas decisões que valem registrar:
   delta (sem ele a velocidade seria infinita até para dois estabelecimentos
   a poucos km).
 
-### O que as features mostram (banco com seed 42)
+### O que as features mostram (banco com seed 42, 6.912 transações)
+
+Médias por classe, depois das correções da Etapa 6.1 (entre parênteses, o
+valor da primeira versão, antes delas):
 
 | Feature | Média (normal) | Média (fraude) | Leitura |
 |---|---|---|---|
-| `amount_deviation` | -0,004 | 2,240 | Separa bem (valor_atípico: 8,7; combinação: 2,6) |
-| `location_distance` | 0,214 | 0,526 | Separa bem (geográfica/viagem/combinação: ~0,75-0,77) |
-| `unusual_hour` | 0,000 | 0,128 | Separa, mas só em 2 dos 5 cenários |
-| `new_device` | 0,025 | 0,025 | **Sem sinal** — ver abaixo |
-| `implied_speed_kmh` | 140 | 508 | Separa; viagem_impossível: 1.814 |
-| `is_impossible_travel` | 1,7% | 24,3% | Pega 100% de `viagem_impossivel`, mas com falsos positivos — ver abaixo |
+| `amount_deviation` | 0,003 (-0,004) | 1,971 (2,240) | Separa bem (valor_atípico: 9,2; combinação: 2,5) |
+| `location_distance` | 0,215 (0,214) | 0,500 (0,526) | Separa bem (geográfica/viagem/combinação: ~0,78) |
+| `unusual_hour` | 0,000 (0,000) | 0,115 (0,128) | Separa, mas só em 2 dos 6 cenários |
+| `new_device` | 0,006 (0,025) | 0,169 (0,025) | **Agora separa**: 100% de `dispositivo_novo`, 0,6% dos normais |
+| `implied_speed_kmh` | 7,9 (140) | 501,8 (508) | Separa; viagem_impossível: 1.890 |
+| `is_impossible_travel` | 0,1% (1,7%) | 21,7% (24,3%) | Pega 100% de `viagem_impossivel` (35 de 35) |
 
-**`new_device` não discrimina nada.** O gerador escolhe o dispositivo de
-cada transação ao acaso entre os do cliente, inclusive nas fraudes — não
-existe nenhum cenário de fraude "dispositivo novo". A feature está
-correta; o que falta é um cenário no gerador que a exercite (ou
-`Device.is_trusted`, que já existe e ainda não é usada).
+**As duas correções funcionaram:**
 
-**`is_impossible_travel` tem falsos positivos concentrados em viajantes.**
-108 transações normais são marcadas (1,7%), 102 delas de clientes
-`viajante` (5,9% das deles): o gerador sorteia a cidade de cada transação
-normal do viajante de forma independente, sem continuidade temporal — duas
-compras a poucas horas em cidades a 1.000+ km "acontecem" sem viagem
-entre elas. É uma limitação do gerador, não da feature; regras que usem
-`is_impossible_travel` sozinha vão acusar viajantes legítimos.
+- `is_impossible_travel` em viajantes legítimos: 5,9% -> **0,0%** (0 de
+  1.668 transações). Nas transações normais de todos os perfis: 1,7% ->
+  0,13% (9 de 6.705).
+- `new_device`: 2,5% vs. 2,5% (idêntico) -> 0,6% vs. 16,9%.
 
-`unusual_hour` é exatamente 0 para toda transação normal — também um
-artefato do gerador (transações normais nunca saem da janela do cliente).
-Em dados reais, clientes saem da própria janela de vez em quando, e a
-separação seria menos limpa.
+**Resíduos que valem saber:**
+
+- As 9 transações normais ainda marcadas como viagem impossível vêm todas
+  *logo depois de uma transação fraudulenta em local distante* (geográfica,
+  combinação ou a própria viagem impossível): a feature compara com a
+  transação imediatamente anterior, seja ela fraude ou não. Não é
+  comportamento do cliente legítimo — é a cauda de uma fraude.
+- Os 0,6% de `new_device` entre os normais são a primeira vez que um cliente
+  com 2 dispositivos usa o segundo (sinal legítimo, e fraco). Uma fraude de
+  outro cenário (1 de 35 `valor_atipico`) cai nesse mesmo caso.
+- `is_impossible_travel` continua sendo específica: pega 100% de
+  `viagem_impossivel`, mas só 17% de `anomalia_geografica` e 12% de
+  `combinacao_de_sinais` (longe de casa, mas nem sempre pouco tempo depois
+  da transação anterior). É a feature certa para *um* cenário, não um
+  detector geral.
+- `unusual_hour` é exatamente 0 para toda transação normal — artefato do
+  gerador (transações normais nunca saem da janela do cliente). Em dados
+  reais, clientes saem da própria janela de vez em quando, e a separação
+  seria menos limpa.
+- `Device.is_trusted` agora tem valor real (`False` em `dispositivo_novo`),
+  mas ainda não é uma feature da tabela — candidata para o Risk Engine.

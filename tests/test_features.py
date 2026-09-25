@@ -23,7 +23,7 @@ from src.synthetic.features import (
     unusual_hour,
 )
 from src.synthetic.generator import MAX_PLAUSIBLE_SPEED_KMH, populate_database
-from src.synthetic.models import Transaction
+from src.synthetic.models import BehaviorProfile, Customer, Transaction
 
 SAO_PAULO = (-23.5505, -46.6333)
 RIO = (-22.9068, -43.1729)  # ~360 km de São Paulo
@@ -146,8 +146,9 @@ def test_new_device_flag():
     assert new_device_flag(tx(device_id=2), seen_device_ids={1, 2}) is False
 
 
-def test_new_device_flag_with_no_history_is_true():
-    assert new_device_flag(tx(device_id=1), seen_device_ids=set()) is True
+def test_new_device_flag_with_no_history_is_false():
+    """Primeira transação do cliente: sem histórico, não há "dispositivo novo"."""
+    assert new_device_flag(tx(device_id=1), seen_device_ids=set()) is False
 
 
 # ---------------------------------------------------------------------------
@@ -258,7 +259,7 @@ def test_first_transaction_of_each_customer_has_explicit_zero_speed(populated):
     assert len(firsts) == len(seen)
     assert (firsts["implied_speed_kmh"] == 0.0).all()
     assert not firsts["is_impossible_travel"].any()
-    assert firsts["new_device"].all()  # sem histórico, todo dispositivo é "novo"
+    assert not firsts["new_device"].any()  # sem histórico, não há "dispositivo novo"
 
 
 def test_impossible_travel_is_true_for_nearly_all_viagem_impossivel_transactions(populated):
@@ -274,8 +275,47 @@ def test_impossible_travel_is_rare_among_normal_transactions(populated):
     _, _, table = populated
     normal_rate = table.loc[~table["is_fraud"], "is_impossible_travel"].mean()
     viagem_rate = table.loc[table["fraud_scenario"] == "viagem_impossivel", "is_impossible_travel"].mean()
-    assert normal_rate < 0.05
-    assert viagem_rate > 10 * normal_rate
+    assert normal_rate < 0.01  # era ~1,7% antes do itinerário dos viajantes
+    assert viagem_rate > 50 * normal_rate
+
+
+def test_impossible_travel_does_not_flag_legitimate_travelers(populated):
+    """Regressão do problema original: 5,9% dos viajantes legítimos eram
+    marcados. Com itinerário em blocos, devem ficar em ~0%.
+    """
+    engine, _, table = populated
+    with Session(engine) as session:
+        profile = {
+            tid: p
+            for tid, p in session.execute(
+                select(Transaction.id, Customer.behavior_profile).join(
+                    Customer, Customer.id == Transaction.customer_id
+                )
+            )
+        }
+    legit_travelers = table[
+        (~table["is_fraud"]) & (table["transaction_id"].map(profile) == BehaviorProfile.VIAJANTE)
+    ]
+
+    assert len(legit_travelers) > 1000
+    assert legit_travelers["is_impossible_travel"].mean() < 0.005
+
+
+def test_new_device_separates_dispositivo_novo_from_normal_transactions(populated):
+    _, _, table = populated
+    novo = table[table["fraud_scenario"] == "dispositivo_novo"]
+    normal = table[~table["is_fraud"]]
+
+    assert len(novo) > 0
+    assert novo["new_device"].mean() >= 0.95
+    assert normal["new_device"].mean() < 0.02
+    assert novo["new_device"].mean() > 20 * normal["new_device"].mean()
+
+
+def test_new_device_is_now_informative_about_fraud_overall(populated):
+    _, _, table = populated
+    by_class = table.groupby("is_fraud")["new_device"].mean()
+    assert by_class[True] > 10 * by_class[False]
 
 
 def test_feature_ranges(populated):

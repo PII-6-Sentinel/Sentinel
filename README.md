@@ -46,7 +46,7 @@ Sentinel/
 │   └── synthetic/                # domínio sintético — independente do Kaggle
 │       ├── models.py             # ORM SQLAlchemy (Customer, Card, Device, Merchant, Transaction)
 │       ├── geo_reference.py      # cidades reais (lat/lon) + distância geodésica local
-│       ├── generator.py          # gerador determinístico (perfis + 5 cenários de fraude)
+│       ├── generator.py          # gerador determinístico (perfis + 6 cenários de fraude)
 │       ├── features.py           # features comportamentais (funções puras)
 │       └── feature_pipeline.py   # build_feature_table(session): banco -> DataFrame
 ├── scripts/
@@ -323,7 +323,7 @@ Complementa o Kaggle com um domínio que tem contexto de negócio explícito
 (cliente, cartão, dispositivo, estabelecimento, geolocalização), gerado de
 forma determinística e persistido em SQLite via SQLAlchemy — nunca CSV
 solto. Justificativa metodológica completa, entidades, perfis
-comportamentais e os 5 cenários de fraude:
+comportamentais e os 6 cenários de fraude:
 [`docs/DOMINIO_SINTETICO.md`](docs/DOMINIO_SINTETICO.md).
 
 Para gerar (ou regenerar) o banco:
@@ -378,7 +378,7 @@ do time com validação estatística, o projeto segue algumas regras fixas
 pytest
 ```
 
-81 testes, nenhum depende de dados baixados/gerados manualmente:
+95 testes, nenhum depende de dados baixados/gerados manualmente:
 
 - **Camada de avaliação (Kaggle)**: separação entre escore e decisão,
   AUC-PR, thresholds inválidos, validação cruzada (5 folds, threshold
