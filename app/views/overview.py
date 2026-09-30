@@ -1,8 +1,10 @@
-"""Página 'Visão Geral' — objetivo do projeto e resumo do planejamento (SWOT/GUT)."""
+"""Página 'Visão Geral' — a proposta de produto do Sentinel.
+
+Não carrega nenhum dataset: é texto e estrutura, então abre instantaneamente
+e funciona mesmo sem o CSV do Kaggle baixado.
+"""
 
 import streamlit as st
-
-from pipeline import load_data
 
 
 def render():
@@ -12,100 +14,83 @@ def render():
         unsafe_allow_html=True,
     )
     st.markdown(
-        '<div class="sentinel-tagline">Vigilância estatística e de Machine '
-        "Learning sobre transações financeiras</div>",
+        '<div class="sentinel-tagline">Análise de risco transacional para '
+        "instituições financeiras</div>",
         unsafe_allow_html=True,
     )
 
     st.markdown(
         """
-        **Sentinel** é um Projeto Integrador acadêmico (TTI 304 — Gerenciamento
-        de Projetos em TI) que constrói e compara, com rigor metodológico,
-        diferentes abordagens para detectar transações fraudulentas:
+        **Sentinel é uma plataforma de análise de risco transacional para
+        instituições financeiras** (bancos, fintechs). A proposta é examinar
+        cada transação no contexto de quem a fez — o histórico do cliente,
+        o cartão, o dispositivo, o local e o horário — e apontar as que se
+        afastam do comportamento esperado, para que uma equipe de risco
+        decida o que investigar.
 
-        - um **baseline estatístico** (regra de limiar sobre um escore de anomalia);
-        - um modelo supervisionado de **Machine Learning** (Regressão Logística);
-        - um modelo **não supervisionado** (Isolation Forest).
-
-        O objetivo não é só "ter um modelo que funciona", mas demonstrar
-        entendimento do processo de avaliação — matriz de confusão, precisão,
-        recall, F1-score e AUC-ROC — em um cenário de classes extremamente
-        desbalanceadas.
+        O sistema **não decide sozinho** se uma transação é fraude: ele
+        classifica o risco de cada uma e deixa a decisão com quem opera.
         """
     )
 
-    df = load_data()
-    n_total = len(df)
-    n_fraud = int(df["Class"].sum())
-    fraud_pct = n_fraud / n_total * 100
-    hours_covered = df["Time"].max() / 3600
-
-    st.subheader("O dataset em números")
+    st.subheader("Sinais que a plataforma considera")
     cols = st.columns(4)
-    metrics = [
-        ("Transações totais", f"{n_total:,}".replace(",", ".")),
-        ("Fraudes confirmadas", f"{n_fraud}"),
-        ("Proporção de fraude", f"{fraud_pct:.3f}%"),
-        ("Período coberto", f"~{hours_covered:.0f}h"),
+    signals = [
+        ("Valor", "quanto a transação destoa do gasto habitual daquele cliente"),
+        ("Localização", "distância de casa e velocidade implícita entre transações consecutivas"),
+        ("Horário", "quão fora da janela habitual do cliente a transação ocorreu"),
+        ("Dispositivo", "se o dispositivo já apareceu antes no histórico do cliente"),
     ]
-    for col, (label, value) in zip(cols, metrics):
+    for col, (title, text) in zip(cols, signals):
         col.markdown(
-            f'<div class="metric-card"><div class="value">{value}</div>'
-            f'<div class="label">{label}</div></div>',
+            f'<div class="swot-card"><h4>{title}</h4><p style="color:#8AA0C4;margin:0">{text}</p></div>',
             unsafe_allow_html=True,
         )
 
     st.markdown("")
-    st.subheader("Planejamento: Análise SWOT")
-    st.caption(
-        "Resumo — análise completa em `docs/SWOT_GUT.md`."
-    )
-
-    swot_cols = st.columns(2)
-    swot_content = [
-        ("Forças", [
-            "Dataset público, bem documentado, benchmark acadêmico consolidado",
-            "Problema bem delimitado, com métricas de sucesso claras na literatura",
-        ], False),
-        ("Fraquezas", [
-            "Pouca experiência prévia da equipe com validação estatística rigorosa",
-            "Pouca experiência com técnicas de balanceamento de classes",
-        ], True),
-        ("Oportunidades", [
-            "Boa base para aprendizado didático de avaliação de modelos",
-            "Comparação estatística vs. ML gera material rico para o relatório",
-        ], False),
-        ("Ameaças", [
-            "Dataset fortemente desbalanceado (~0,17% de fraudes) — maior ameaça",
-            "Risco de vazamento de dados (data leakage) se balanceamento/escala forem aplicados antes do split",
-        ], True),
-    ]
-    for i, (title, items, is_risk) in enumerate(swot_content):
-        css_class = "swot-card risk" if is_risk else "swot-card"
-        items_html = "".join(f"<li>{item}</li>" for item in items)
-        swot_cols[i % 2].markdown(
-            f'<div class="{css_class}"><h4>{title}</h4><ul>{items_html}</ul></div>',
-            unsafe_allow_html=True,
-        )
-        if i % 2 == 1:
-            st.markdown("")
-
-    st.markdown("")
-    st.subheader("Priorização de riscos (matriz GUT)")
+    st.subheader("Estado do projeto")
     st.dataframe(
         {
-            "Risco": [
-                "Falta de rigor estatístico na avaliação",
-                "Desbalanceamento de classes tratado incorretamente",
-                "Prazo de semestre apertado",
-                "Overfitting por validação mal feita",
+            "Componente": [
+                "Domínio sintético (clientes, cartões, dispositivos, transações)",
+                "Features comportamentais",
+                "Validação científica dos modelos (dataset Kaggle)",
+                "Risk Engine",
+                "Central de Transações",
             ],
-            "Gravidade": [5, 5, 4, 4],
-            "Urgência": [5, 5, 4, 3],
-            "Tendência": [4, 3, 4, 3],
-            "GUT": [100, 75, 64, 36],
-            "Prioridade": ["Crítica", "Alta", "Alta", "Média"],
+            "Situação": ["Pronto", "Pronto", "Pronto", "Em construção", "Em construção"],
         },
         hide_index=True,
         use_container_width=True,
     )
+
+    st.info(
+        "**Validação científica:** a base metodológica do sistema — "
+        "comparação de modelos, métricas, validação cruzada e análise de "
+        "threshold sobre o dataset público do Kaggle — fica em "
+        "**🔬 Ver Metodologia Científica (Kaggle)**, no rodapé da barra lateral.",
+        icon="🔬",
+    )
+
+    with st.expander("Planejamento do projeto (SWOT / GUT)"):
+        st.markdown(
+            "Projeto Integrador — TTI 304 (Gerenciamento de Projetos em TI). "
+            "Análise completa em `docs/SWOT_GUT.md`."
+        )
+        st.dataframe(
+            {
+                "Risco": [
+                    "Falta de rigor estatístico na avaliação",
+                    "Desbalanceamento de classes tratado incorretamente",
+                    "Prazo de semestre apertado",
+                    "Overfitting por validação mal feita",
+                ],
+                "Gravidade": [5, 5, 4, 4],
+                "Urgência": [5, 5, 4, 3],
+                "Tendência": [4, 3, 4, 3],
+                "GUT": [100, 75, 64, 36],
+                "Prioridade": ["Crítica", "Alta", "Alta", "Média"],
+            },
+            hide_index=True,
+            use_container_width=True,
+        )
