@@ -1,8 +1,16 @@
-"""Sentinel — app de apresentação do projeto (`streamlit run app/app.py`).
+"""Sentinel — app (`streamlit run app/app.py`).
+
+Duas seções, com pesos diferentes de propósito:
+
+- **Produto** (navegação principal): as páginas operacionais, voltadas a um
+  cliente (banco/fintech). Em `app/views/`.
+- **Metodologia Científica (Kaggle)**: a validação dos modelos, base
+  metodológica do sistema mas não o produto. Em `app/views/scientific/`,
+  atrás de um único ponto de entrada no rodapé da sidebar.
 
 Camada de UI pura: toda a lógica de dados/modelos vive em src/ e é reusada
 aqui via app/pipeline.py (que adiciona cache). Cada página é uma função
-`render()` em app/views/, escolhida pela navegação na sidebar.
+`render()`, escolhida pela navegação da seção ativa.
 """
 
 import sys
@@ -22,31 +30,64 @@ for path in (PROJECT_ROOT, APP_DIR):
         sys.path.insert(0, str(path))
 
 from theme import inject_css  # noqa: E402
-from views import demo, eda, models_page, overview, threshold_analysis  # noqa: E402
+from views import overview, scientific, transactions  # noqa: E402
 
 st.set_page_config(
-    page_title="Sentinel — Detecção de Anomalias",
+    page_title="Sentinel — Análise de Risco Transacional",
     page_icon="🛡️",
     layout="wide",
 )
 inject_css()
 
-PAGES = {
+PRODUCT_PAGES = {
     "Visão Geral": overview,
-    "Análise Exploratória": eda,
-    "Comparação de Modelos": models_page,
-    "Análise de Threshold": threshold_analysis,
-    "Demo ao Vivo": demo,
+    "Central de Transações": transactions,
 }
+
+PRODUCT, SCIENTIFIC = "product", "scientific"
+st.session_state.setdefault("section", PRODUCT)
+
+
+def _go(section: str) -> None:
+    st.session_state["section"] = section
+
+
+section = st.session_state["section"]
 
 with st.sidebar:
     st.markdown("## 🛡️ Sentinel")
-    st.caption("Detecção de anomalias em transações")
-    page_name = st.radio("Navegação", list(PAGES.keys()), label_visibility="collapsed")
-    st.markdown("---")
-    st.caption(
-        "Projeto Integrador — TTI 304\n\n"
-        "Dataset: [Credit Card Fraud Detection](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud) (Kaggle/ULB)"
-    )
+    st.caption("Análise de risco transacional")
 
-PAGES[page_name].render()
+    if section == PRODUCT:
+        page_name = st.radio(
+            "Navegação", list(PRODUCT_PAGES.keys()), key="nav_product", label_visibility="collapsed"
+        )
+        st.markdown("---")
+        st.button(
+            "🔬 Ver Metodologia Científica (Kaggle) →",
+            on_click=_go,
+            args=(SCIENTIFIC,),
+            use_container_width=True,
+        )
+    else:
+        st.button("← Voltar ao produto", on_click=_go, args=(PRODUCT,), use_container_width=True)
+        st.markdown("---")
+        st.caption("🔬 Metodologia Científica (Kaggle)")
+        page_name = st.radio(
+            "Navegação científica",
+            list(scientific.PAGES.keys()),
+            key="nav_scientific",
+            label_visibility="collapsed",
+        )
+        st.caption(
+            "Dataset: [Credit Card Fraud Detection](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud) (Kaggle/ULB)"
+        )
+
+    st.markdown("---")
+    st.caption("Projeto Integrador — TTI 304")
+
+if section == PRODUCT:
+    PRODUCT_PAGES[page_name].render()
+else:
+    scientific.render_intro()
+    scientific.PAGES[page_name].render()
