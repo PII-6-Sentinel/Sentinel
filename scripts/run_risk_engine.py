@@ -28,8 +28,10 @@ from src.risk.dataset import build_risk_table  # noqa: E402
 from src.risk.engine import ACTION_BY_LEVEL, ACTION_DESCRIPTION  # noqa: E402
 from src.risk.report import (  # noqa: E402
     APPROACH_COMBINED,
+    APPROACH_COMBINED_5050,
     APPROACH_ML,
     APPROACH_RULES,
+    MIN_RULES_WEIGHT,
     TARGET_BLOCK_PRECISION,
     TARGET_RECALL,
     evaluate_risk_engine,
@@ -84,18 +86,31 @@ def main() -> None:
     print(f"  clientes em mais de um conjunto: {overlap}")
 
     # 2 ------------------------------------------------------------------
-    title("2. Varredura de pesos ML/regras - PR-AUC na VALIDAÇÃO")
+    title("2. Escolha do peso ML/regras - curva de PR-AUC na VALIDAÇÃO")
+    print(f"  regra: maior PR-AUC na validação com peso das regras >= {MIN_RULES_WEIGHT:.0%}")
+    print("         (empate: maior peso de regras). Declarada antes de olhar o teste.")
+    chosen = ev.engine.config.behavior_weight
+    print(f"  {'regras':>7s} {'ML':>5s} {'PR-AUC':>8s} {'ROC-AUC':>8s}")
     for _, r in ev.weight_sweep.iterrows():
-        mark = "  <- usado (50/50)" if abs(r["peso_ml"] - ev.engine.config.ml_weight) < 1e-9 else ""
-        print(f"  ML {r['peso_ml']:.2f} / regras {r['peso_regras']:.2f}   PR-AUC={r['pr_auc']:.3f}   ROC-AUC={r['roc_auc']:.3f}{mark}")
-    best = ev.weight_sweep.loc[ev.weight_sweep["pr_auc"].idxmax()]
-    print(f"  melhor peso na validação: ML {best['peso_ml']:.2f} (PR-AUC {best['pr_auc']:.3f})")
+        notes = []
+        if abs(r["peso_regras"] - chosen) < 1e-9:
+            notes.append("<- escolhido")
+        if abs(r["peso_regras"] - 0.5) < 1e-9:
+            notes.append("(50/50)")
+        if not r["elegivel"]:
+            notes.append("fora da restrição")
+        print(
+            f"  {r['peso_regras']:7.0%} {r['peso_ml']:5.0%} {r['pr_auc']:8.3f} {r['roc_auc']:8.3f}  {' '.join(notes)}"
+        )
+    print(f"  motor: {chosen:.0%} regras / {ev.engine.config.ml_weight:.0%} ML")
 
     # 3 ------------------------------------------------------------------
     title("3. Limiares calibrados na VALIDAÇÃO (o teste não foi usado)")
     print(f"  critério de revisão : maior limiar com recall >= {TARGET_RECALL:.0%} das fraudes")
     print(f"  critério de bloqueio: menor limiar com precisão >= {TARGET_BLOCK_PRECISION:.0%}")
     print(f"  motor (combinado): baixo 0-{bands.review_threshold} | médio {bands.review_threshold + 1}-{bands.block_threshold} | alto {bands.block_threshold + 1}-100   (padrão: 0-30 | 31-70 | 71-100)")
+    r50, b50 = ev.review_thresholds[APPROACH_COMBINED_5050], ev.block_thresholds[APPROACH_COMBINED_5050]
+    print(f"  combinado 50/50  : baixo 0-{r50} | médio {r50 + 1}-{b50} | alto {b50 + 1}-100")
     print("  escala exibida: o Risk Score mostrado remapeia esses limiares para 30 e 70")
     print("  (mesmas decisões; ex.: score interno "
           f"{bands.review_threshold + 1} -> exibido {bands.to_display(bands.review_threshold + 1)})")
@@ -112,25 +127,28 @@ def main() -> None:
         )
     comp = ev.comparison.set_index("abordagem")
     c, m, r_ = comp.loc[APPROACH_COMBINED], comp.loc[APPROACH_ML], comp.loc[APPROACH_RULES]
+    c50 = comp.loc[APPROACH_COMBINED_5050]
     print()
     for metric, label in (("pr_auc", "PR-AUC"), ("f1", "F1")):
         best_part = max(m[metric], r_[metric])
         if c[metric] > best_part:
-            print(f"  {label}: o combinado ({c[metric]:.3f}) SUPERA a melhor parte isolada ({best_part:.3f}).")
+            print(f"  {label}: o motor ({c[metric]:.3f}) SUPERA a melhor parte isolada ({best_part:.3f}).")
         else:
             print(
-                f"  {label}: o combinado ({c[metric]:.3f}) NÃO supera a melhor parte isolada "
+                f"  {label}: o motor ({c[metric]:.3f}) NÃO supera a melhor parte isolada "
                 f"({best_part:.3f}) - a combinação não melhora esta métrica no teste."
             )
+        verb = "melhor" if c[metric] > c50[metric] else ("igual" if c[metric] == c50[metric] else "PIOR")
+        print(f"  {label}: motor com o peso escolhido ({c[metric]:.3f}) {verb} que o 50/50 ({c50[metric]:.3f}).")
 
     print()
     print("  Estabilidade - PR-AUC em validação cruzada 5-fold por cliente (tabela inteira):")
     for _, s in ev.stability.iterrows():
-        print(f"    {s['abordagem']:20s} {s['pr_auc_media']:.3f} +/- {s['pr_auc_desvio']:.3f}")
+        print(f"    {s['abordagem']:22s} {s['pr_auc_media']:.3f} +/- {s['pr_auc_desvio']:.3f}")
 
     # 5 ------------------------------------------------------------------
     title("5. Recall por cenário de fraude (TESTE) - sinalizadas / total")
-    approaches = (APPROACH_RULES, APPROACH_ML, APPROACH_COMBINED)
+    approaches = (APPROACH_RULES, APPROACH_ML, APPROACH_COMBINED, APPROACH_COMBINED_5050)
     print(f"  {'cenário':24s}" + "".join(f"{a:>22s}" for a in approaches))
     for scenario, row in ev.scenario_recall.iterrows():
         cells = "".join(
