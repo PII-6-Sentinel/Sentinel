@@ -80,3 +80,28 @@ def synthetic_pipeline(synthetic_df):
     }
 
     return {"models": models, "results": results, "thresholds": thresholds, "y_test": y_test}
+
+
+@pytest.fixture(scope="session")
+def synthetic_engine():
+    """SQLite EM MEMÓRIA populado pelo gerador do domínio sintético, com os
+    parâmetros default (seed 42, 130 clientes) — nunca o arquivo real
+    data/synthetic/sentinel.db. Compartilhado pelos testes do Risk Engine.
+    """
+    from sqlalchemy import create_engine
+
+    from src.synthetic.generator import populate_database
+
+    engine = create_engine("sqlite:///:memory:")
+    populate_database(engine)
+    return engine
+
+
+@pytest.fixture(scope="session")
+def risk_table(synthetic_engine):
+    from sqlalchemy.orm import Session
+
+    from src.risk.dataset import build_risk_table
+
+    with Session(synthetic_engine) as session:
+        return build_risk_table(session)
