@@ -172,9 +172,9 @@ real.
   em R$ 5) por simplicidade; gastos reais tendem a ter cauda mais longa
   (distribuição log-normal), como já observado na análise exploratória do
   dataset do Kaggle (`notebooks/01_exploracao.ipynb`).
-- Esta etapa gera e persiste os dados — nenhum modelo (estatístico ou ML)
-  roda sobre este domínio ainda. Isso é intencional: o Risk Engine que vai
-  consumir este banco é uma etapa futura separada.
+- O Risk Engine que consome este banco está documentado em
+  [`docs/RISK_ENGINE.md`](RISK_ENGINE.md), incluindo as limitações que
+  estes dados impõem a ele.
 
 ## Camada de features comportamentais (Etapa 6)
 
@@ -182,7 +182,7 @@ real.
 `src/synthetic/feature_pipeline.py` (`build_feature_table(session)`)
 transformam as transações do banco em uma tabela de features — uma linha
 por transação, mais `is_fraud` e `fraud_scenario`. Nenhuma decisão de risco
-acontece aqui; o Risk Engine (etapa futura) consome esta tabela em regras
+acontece aqui; o Risk Engine ([`docs/RISK_ENGINE.md`](RISK_ENGINE.md)) consome esta tabela em regras
 e/ou modelos.
 
 | Feature | Definição |
@@ -244,4 +244,5 @@ valor da primeira versão, antes delas):
   reais, clientes saem da própria janela de vez em quando, e a separação
   seria menos limpa.
 - `Device.is_trusted` agora tem valor real (`False` em `dispositivo_novo`),
-  mas ainda não é uma feature da tabela — candidata para o Risk Engine.
+  mas não é uma feature desta tabela — o Risk Engine a acrescenta como
+  `device_untrusted` (`src/risk/dataset.py`).
