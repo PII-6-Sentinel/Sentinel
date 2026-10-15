@@ -191,6 +191,7 @@ e/ou modelos.
 | `location_distance` | `distance_from_home_km` em escala log, normalizado para [0, 1] (referência fixa de 20.000 km) |
 | `unusual_hour` | Distância circular (h) até a janela típica do cliente, dividida por 12; 0 dentro da janela |
 | `new_device` | O dispositivo nunca apareceu antes no histórico do cliente — mas só quando JÁ existe histórico: na primeira transação do cliente é `False` ("nunca vi esse dispositivo porque nunca vi nada" não é o mesmo sinal que "dispositivo novo depois de um histórico estabelecido") |
+| `new_city` | A cidade do estabelecimento nunca apareceu no histórico ANTERIOR do cliente e não é a cidade natal; na primeira transação do cliente é `False` (mesma decisão de `new_device`). Adicionada na Etapa 7.5 — ver `docs/RISK_ENGINE.md` |
 | `implied_speed_kmh` / `is_impossible_travel` | km/h entre duas transações consecutivas do cliente (`geopy.geodesic`); impossível se > 900 km/h, o mesmo limiar do gerador. Primeira transação do cliente: 0.0 / False, explicitamente |
 
 Duas decisões que valem registrar:
