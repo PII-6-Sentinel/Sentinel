@@ -16,16 +16,18 @@ from src.synthetic.features import (
     amount_deviation,
     implied_travel_speed,
     location_distance,
+    new_city_flag,
     new_device_flag,
     unusual_hour,
 )
-from src.synthetic.models import Customer, Transaction
+from src.synthetic.models import Customer, Merchant, Transaction
 
 FEATURE_COLUMNS = [
     "amount_deviation",
     "location_distance",
     "unusual_hour",
     "new_device",
+    "new_city",
     "implied_speed_kmh",
     "is_impossible_travel",
 ]
@@ -49,18 +51,22 @@ def build_feature_table(session: Session) -> pd.DataFrame:
     "vazio" esperado na tabela.
     """
     customers = {c.id: c for c in session.scalars(select(Customer))}
+    merchant_city = dict(session.execute(select(Merchant.id, Merchant.city)).all())
     transactions = session.scalars(
         select(Transaction).order_by(Transaction.customer_id, Transaction.timestamp, Transaction.id)
     )
 
     previous: dict[int, Transaction] = {}
     seen_devices: dict[int, set[int]] = {}
+    seen_cities: dict[int, set[str]] = {}
     rows = []
 
     for tx in transactions:
         cid = tx.customer_id
         customer = customers[cid]
         devices = seen_devices.setdefault(cid, set())
+        cities = seen_cities.setdefault(cid, set())
+        city = merchant_city[tx.merchant_id]
         travel = implied_travel_speed(tx, previous.get(cid))
 
         rows.append(
@@ -70,6 +76,7 @@ def build_feature_table(session: Session) -> pd.DataFrame:
                 "location_distance": location_distance(tx),
                 "unusual_hour": unusual_hour(tx, customer),
                 "new_device": new_device_flag(tx, devices),
+                "new_city": new_city_flag(city, customer, cities),
                 "implied_speed_kmh": 0.0 if travel.speed_kmh is None else travel.speed_kmh,
                 "is_impossible_travel": travel.is_impossible_travel,
                 "is_fraud": tx.is_fraud,
@@ -78,6 +85,7 @@ def build_feature_table(session: Session) -> pd.DataFrame:
         )
 
         devices.add(tx.device_id)
+        cities.add(city)
         previous[cid] = tx
 
     return pd.DataFrame(rows, columns=TABLE_COLUMNS)

@@ -124,6 +124,23 @@ def new_device_flag(transaction: Any, seen_device_ids: Collection[int]) -> bool:
     return transaction.device_id not in seen_device_ids
 
 
+def new_city_flag(city: str, customer: Any, seen_cities: Collection[str]) -> bool:
+    """True se `city` (cidade do estabelecimento da transação) nunca apareceu
+    no histórico ANTERIOR do cliente e não é a cidade natal dele.
+
+    Mesma lógica de `new_device_flag`: `seen_cities` = cidades das
+    transações do cliente estritamente anteriores a esta (quem monta a
+    tabela mantém esse conjunto em ordem cronológica — sem olhar o futuro).
+    Sem histórico (primeira transação) devolve False. A cidade natal é
+    sempre conhecida, mesmo que o cliente ainda não tenha comprado nela.
+    """
+    if not seen_cities:
+        return False
+    if city == customer.home_city:
+        return False
+    return city not in seen_cities
+
+
 def implied_travel_speed(transaction: Any, previous_transaction: Any | None) -> TravelSpeed:
     """Velocidade implícita (km/h) entre duas transações CONSECUTIVAS do
     mesmo cliente, e se ela é fisicamente implausível.
