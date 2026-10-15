@@ -3,7 +3,7 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.risk.dataset import RISK_TABLE_COLUMNS, build_risk_table
+from src.risk.dataset import RISK_TABLE_COLUMNS
 from src.synthetic.feature_pipeline import FEATURE_COLUMNS, build_feature_table
 from src.synthetic.models import Device, FraudScenario, Transaction
 
