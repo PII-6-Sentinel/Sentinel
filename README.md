@@ -51,13 +51,23 @@ Sentinel/
 │       ├── generator.py          # gerador determinístico (perfis + 6 cenários de fraude)
 │       ├── features.py           # features comportamentais (funções puras)
 │       └── feature_pipeline.py   # build_feature_table(session): banco -> DataFrame
+│   └── risk/                     # Risk Engine (só domínio sintético)
+│       ├── dataset.py            # tabela de risco: features + km + confiança do dispositivo
+│       ├── behavior_score.py     # score por regras explicáveis (pesos em BehaviorConfig)
+│       ├── ml_score.py           # Regressão Logística treinada nos dados sintéticos
+│       ├── engine.py             # RiskEngine: combina ML + regras -> score, nível, ação, motivos
+│       ├── new_transaction.py    # pontua uma transação nova a partir do histórico do cliente
+│       ├── evaluation.py         # split por cliente, métricas, calibração de limiares
+│       └── report.py             # avaliação comparativa (regras vs ML vs combinado)
 ├── scripts/
 │   ├── download_dataset.py   # download do Kaggle via API
-│   └── generate_mock_data.py # gera e persiste o domínio sintético
+│   ├── generate_mock_data.py # gera e persiste o domínio sintético
+│   └── run_risk_engine.py    # relatório de avaliação do Risk Engine
 ├── reports/           # figuras e relatórios gerados
 ├── docs/
 │   ├── SWOT_GUT.md
-│   └── DOMINIO_SINTETICO.md
+│   ├── DOMINIO_SINTETICO.md
+│   └── RISK_ENGINE.md
 ├── requirements.txt
 └── README.md
 ```
@@ -354,13 +364,45 @@ fixa (`--seed`, default 42) — rodar de novo produz exatamente o mesmo
 banco; use `--force` para sobrescrever um banco já existente, ou
 `--n-customers` para gerar um volume diferente.
 
-**Nesta etapa, este domínio só é gerado e persistido** — nenhum modelo
-(estatístico ou ML) roda sobre ele ainda, e não há página nova no app para
-ele. Isso é intencional: consumir esse banco (Risk Engine, Central de
-Transações) é uma etapa futura separada, para não misturar "construir o
-domínio" com "construir o que consome o domínio" numa mesma entrega.
+O Risk Engine (seção 7) consome este banco. A Central de Transações e o
+simulador no app ainda são etapas futuras.
 
-## 7. Metodologia de avaliação
+## 7. Risk Engine
+
+O núcleo do produto: recebe uma transação do domínio sintético e devolve um
+**Risk Score 0-100**, um **nível** (baixo/médio/alto), uma **ação
+recomendada** (aprovar/revisar/bloquear) e os **motivos** em português,
+ordenados pela contribuição de cada um. Combina dois scores, em partes
+iguais por padrão:
+
+- **regras explicáveis** (viagem impossível, localização, valor,
+  dispositivo novo, dispositivo não confiável, horário), com pesos
+  justificados num único objeto de configuração;
+- **Regressão Logística** treinada só nos dados sintéticos.
+
+Viagem impossível nunca é aprovada automaticamente (piso de nível médio).
+Arquitetura, justificativa de cada peso, resultados e limitações:
+[`docs/RISK_ENGINE.md`](docs/RISK_ENGINE.md).
+
+Para rodar a avaliação completa (requer `data/synthetic/sentinel.db`):
+
+```bash
+python scripts/run_risk_engine.py
+```
+
+O relatório compara só regras, só ML e o combinado (PR-AUC, ROC-AUC,
+precisão, recall, F1), mostra o recall por cenário de fraude, a
+distribuição por nível/ação e 3 exemplos explicados. O treino/teste é
+dividido **por cliente** e os limiares são calibrados num conjunto de
+validação separado. Resultado principal, dito sem rodeios: o combinado
+supera muito as regras sozinhas, mas **não supera o ML sozinho** — em boa
+parte porque o ML explora um artefato do gerador (ver a seção 5 do doc).
+
+Os números validam a lógica do sistema sobre dados **simulados**: os
+rótulos foram gerados a partir das mesmas features que o motor usa, então
+não provam desempenho em fraude real.
+
+## 8. Metodologia de avaliação
 
 Como a maior fraqueza identificada na análise SWOT/GUT é a pouca experiência
 do time com validação estatística, o projeto segue algumas regras fixas
@@ -388,13 +430,13 @@ do time com validação estatística, o projeto segue algumas regras fixas
 - **MVP antes de otimização:** um baseline estatístico simples (regras) roda
   de ponta a ponta antes de investir em ajuste fino de modelos de ML.
 
-## 8. Testes
+## 9. Testes
 
 ```bash
 pytest
 ```
 
-95 testes, nenhum depende de dados baixados/gerados manualmente:
+192 testes, nenhum depende de dados baixados/gerados manualmente:
 
 - **Camada de avaliação (Kaggle)**: separação entre escore e decisão,
   AUC-PR, thresholds inválidos, validação cruzada (5 folds, threshold
@@ -408,6 +450,11 @@ pytest
 - **Features comportamentais** (`tests/test_features.py`): cada feature com
   casos simples, primeira transação de cada cliente sem `NaN`, e
   `is_impossible_travel` verdadeiro em `viagem_impossivel`.
+- **Risk Engine** (`tests/test_risk_*.py`): cada regra isolada,
+  fronteiras das faixas (30/31, 70/71), piso de viagem impossível,
+  determinismo, split sem cliente em dois conjuntos, calibração de
+  limiares e transação nova coerente com `build_risk_table`. Usam um
+  SQLite em memória populado pelo gerador.
 - **Domínio sintético** (`tests/test_synthetic_data.py`): volume de
   clientes/transações dentro do esperado, taxa de fraude na faixa (~3%),
   nenhuma `distance_from_home_km` negativa, que toda transação
@@ -415,7 +462,7 @@ pytest
   (mesma seed = mesmo dataset) e persistência em SQLite `:memory:` — nunca
   o `data/synthetic/sentinel.db` real.
 
-## 9. Próximos passos
+## 10. Próximos passos
 
 - [x] Implementar o baseline estatístico, Regressão Logística e Isolation Forest (`src/models.py`).
 - [x] Aplicação interativa (Streamlit) para apresentação (`app/`).
@@ -427,6 +474,8 @@ pytest
 - [x] Testes unitários da camada de avaliação e do domínio sintético (`tests/`).
 - [ ] Rodar `01_exploracao.ipynb` com o dataset real e preencher a seção de conclusões.
 - [x] Features comportamentais sobre o domínio sintético (`src/synthetic/features.py`).
-- [ ] Risk Engine consumindo a tabela de features (etapa futura, ainda não iniciada).
+- [x] Risk Engine: regras + ML, score 0-100, nível, ação e motivos (`src/risk/`, `docs/RISK_ENGINE.md`).
+- [ ] Feature de novidade de localização ("o cliente já esteve nesta cidade?") — ponto cego atual do motor.
+- [ ] Central de Transações e simulador consumindo o Risk Engine (Etapas 9-10).
 - [ ] Ajustar hiperparâmetros e comparar com balanceamento via SMOTE (não só `class_weight`).
 - [ ] Notebook comparativo formalizando as métricas das três abordagens (hoje só na aplicação).
