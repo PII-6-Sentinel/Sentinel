@@ -10,10 +10,11 @@ score = peso_ml × ml_score + peso_regras × behavior_score, arredondado.
 - O ML aprende COMBINAÇÕES de sinais a partir dos dados, mas os rótulos
   foram gerados a partir das mesmas features (circularidade) — confiar
   só nele seria confiar no próprio gerador.
-- Pesos iguais não privilegiam nenhum dos dois a priori, e garantem que
-  metade de todo score final venha de motivos legíveis. A varredura de
-  pesos no conjunto de VALIDAÇÃO (scripts/run_risk_engine.py) é a evidência
-  empírica; o teste não é usado para escolher pesos.
+- Pesos iguais não privilegiam nenhum dos dois a priori; por isso 50/50 é
+  o padrão de `EngineConfig`. O motor AVALIADO usa o peso escolhido na
+  validação por uma regra declarada (maior PR-AUC com no mínimo 30% de
+  peso nas regras, por explicabilidade) — ver `src/risk/report.py` e
+  docs/RISK_ENGINE.md. O teste nunca é usado para escolher pesos.
 
 Piso por regra dura (por que "médio" e não "alto")
 --------------------------------------------------

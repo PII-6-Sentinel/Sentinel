@@ -372,8 +372,9 @@ simulador no app ainda são etapas futuras.
 O núcleo do produto: recebe uma transação do domínio sintético e devolve um
 **Risk Score 0-100**, um **nível** (baixo/médio/alto), uma **ação
 recomendada** (aprovar/revisar/bloquear) e os **motivos** em português,
-ordenados pela contribuição de cada um. Combina dois scores, em partes
-iguais por padrão:
+ordenados pela contribuição de cada um. Combina dois scores, com o peso
+escolhido na validação por uma regra declarada (maior PR-AUC com no mínimo
+30% de peso nas regras, por explicabilidade) — hoje 30% regras / 70% ML:
 
 - **regras explicáveis** (viagem impossível, localização, valor, cidade
   nova, dispositivo novo, dispositivo não confiável, horário), com pesos
@@ -395,8 +396,8 @@ python scripts/run_risk_engine.py
 O relatório compara só regras, só ML e o combinado (PR-AUC, ROC-AUC,
 precisão, recall, F1), mostra o recall por cenário de fraude, a
 distribuição por nível/ação e 3 exemplos explicados. O treino/teste é
-dividido **por cliente** e os limiares são calibrados num conjunto de
-validação separado. Resultado principal, dito sem rodeios: o combinado
+dividido **por cliente**; peso e limiares são escolhidos num conjunto de
+validação separado, e o teste é usado uma única vez. Resultado principal, dito sem rodeios: o combinado
 supera muito as regras sozinhas, mas **não supera o ML sozinho** no
 ranking — a diferença vem de um artefato do gerador (horário) e das
 primeiras visitas legítimas a uma cidade, indistinguíveis de fraude

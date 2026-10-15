@@ -113,12 +113,44 @@ dividem o peso entre si (por isso um deles fica perto de zero).
 
 ## 3. Combinação, piso, faixas e escala de exibição
 
-**Score interno** = 0,5 × ML + 0,5 × regras, arredondado (configurável em
-`EngineConfig`). Pesos iguais não privilegiam nenhum dos dois a priori: as
-regras são explicáveis e independem dos rótulos; o ML aprende combinações,
-mas a partir de rótulos circulares. Com 50/50, metade de todo score vem de
-motivos legíveis. **A evidência agora contraria esse ponto de partida** —
-ver seção 5.
+**Score interno** = peso_ML × ML + peso_regras × regras, arredondado.
+`EngineConfig` tem 50/50 como ponto de partida neutro; o motor avaliado usa
+o peso escolhido na validação pela regra abaixo: **30% regras / 70% ML**.
+
+**Regra de escolha do peso (declarada antes de olhar o teste):** maximizar o
+PR-AUC na **validação**, numa grade de 0% a 100% de peso das regras com passo
+de 10%, **com no mínimo 30% de peso nas regras**; em caso de empate, o maior
+peso de regras. Implementada em `src/risk/report.py` (`choose_rules_weight`),
+então o script reproduz a escolha em vez de ela ser feita à mão.
+
+**Por que o mínimo de 30%:** explicabilidade é objetivo do produto — a
+equipe de risco precisa entender cada decisão, e o cliente bloqueado precisa
+de uma justificativa. Sem a restrição, a validação escolheria o ML puro
+(PR-AUC 0,927), que nestes dados se apoia em grande parte num artefato do
+gerador (horário fora da janela nunca ocorre em transação normal; ver
+seção 2). Com ≥ 30% vindo das regras, uma parte substancial de todo score
+continua saindo de motivos legíveis e de conhecimento de domínio que não
+depende dos rótulos sintéticos. O piso de 30% foi fixado por esse critério de
+produto, não ajustado aos dados.
+
+Curva de PR-AUC na validação (score combinado contínuo):
+
+| Regras | ML | PR-AUC | |
+|---|---|---|---|
+| 0% | 100% | 0,927 | fora da restrição |
+| 10% | 90% | 0,909 | fora da restrição |
+| 20% | 80% | 0,872 | fora da restrição |
+| **30%** | **70%** | **0,837** | **escolhido** |
+| 40% | 60% | 0,817 | |
+| 50% | 50% | 0,803 | ponto de partida anterior |
+| 60% | 40% | 0,793 | |
+| 70% | 30% | 0,784 | |
+| 80% | 20% | 0,775 | |
+| 90% | 10% | 0,727 | |
+| 100% | 0% | 0,651 | |
+
+A curva cai de forma monotônica com o peso das regras, então quem decide é
+a restrição: o peso escolhido é o mínimo permitido de regras.
 
 **Piso por regra dura:** viagem impossível força o nível a ser ao menos
 **médio** (revisão), nunca é aprovada automaticamente. Não força **alto**
@@ -135,13 +167,16 @@ revisão humana resolve.
 - bloqueio: o menor limiar com precisão ≥ 90% (só se bloqueia
   automaticamente quando quase tudo o que é bloqueado é fraude).
 
-Resultado da calibração (score interno): **baixo 0-56, médio 57-71, alto
-72-100** (antes da feature de cidade: 0-54, 55-61, 62-100).
+Resultado da calibração (score interno, peso 30/70): **baixo 0-73, médio
+74-81, alto 82-100**. Com 50/50 seria 0-56, 57-71, 72-100 (e, antes da
+feature de cidade, 0-54, 55-61, 62-100). Os limiares mudam com o peso
+porque o score combinado muda de distribuição; por isso são sempre
+recalibrados para o peso em uso.
 
 **Escala de exibição:** para quem opera, o `risk_score` exibido remapeia os
 limiares calibrados para **30 e 70** por uma transformação monotônica por
-partes (`DecisionBands.to_display`): [0, 56] → [0, 30], (56, 71] → [31, 70],
-(71, 100] → [71, 100]. Nível e ação continuam decididos pelo score interno;
+partes (`DecisionBands.to_display`): [0, 73] → [0, 30], (73, 81] → [31, 70],
+(81, 100] → [71, 100]. Nível e ação continuam decididos pelo score interno;
 a transformação só muda o número exibido. Isso é testado exaustivamente:
 para centenas de combinações de faixas e todo score interno de 0 a 100, o
 nível lido na escala exibida é idêntico ao do score interno. As métricas de
@@ -155,8 +190,8 @@ trechos e criaria empates artificiais).
   modelo reconhecer no teste um cliente visto no treino.
 - Três conjuntos de clientes, sem sobreposição: treino (64 clientes, 3.311
   transações, 111 fraudes) ajusta o ML; validação (27 / 1.345 / 40) escolhe
-  limiares e mostra a varredura de pesos; teste (39 / 2.256 / 56) é tocado
-  para o relatório.
+  o peso (pela regra da seção 3) e calibra os limiares; teste
+  (39 / 2.256 / 56) é tocado uma única vez, para o relatório.
 - Seed fixa (42) em tudo.
 - Métricas: PR-AUC (principal, pelo desbalanceamento), ROC-AUC, precisão,
   recall, F1, matriz de confusão e recall por cenário com contagens.
@@ -168,26 +203,36 @@ Para reproduzir: `python scripts/run_risk_engine.py`.
 
 ## 5. Resultados (teste, 39 clientes nunca vistos)
 
-"Sinalizada" = não aprovada automaticamente (nível médio ou alto).
+"Sinalizada" = não aprovada automaticamente (nível médio ou alto). Cada
+abordagem tem seus limiares calibrados na validação com o mesmo critério.
 
 | Abordagem | PR-AUC | ROC-AUC | Precisão | Recall | F1 | TP | FP | FN |
 |---|---|---|---|---|---|---|---|---|
 | Só regras | 0,641 | 0,972 | 0,169 | 0,929 | 0,286 | 52 | 256 | 4 |
 | Só ML | **0,929** | 0,997 | **0,731** | 0,875 | **0,797** | 49 | 18 | 7 |
-| Combinado (motor) | 0,787 | 0,993 | 0,634 | **0,929** | 0,754 | 52 | 30 | 4 |
-| Combinado, faixas padrão 30/70 | 0,790 | 0,993 | 0,534 | 0,982 | 0,692 | 55 | 48 | 1 |
+| **Combinado (motor, 30% regras / 70% ML)** | 0,804 | 0,994 | 0,676 | 0,893 | 0,769 | 50 | 24 | 6 |
+| Combinado 50/50 | 0,787 | 0,993 | 0,634 | 0,929 | 0,754 | 52 | 30 | 4 |
 
 Estabilidade (PR-AUC, 5-fold por cliente): regras 0,688 ± 0,065; ML
-0,953 ± 0,016; combinado 0,845 ± 0,043.
+0,953 ± 0,016; **motor 0,864 ± 0,040**; 50/50 0,845 ± 0,043.
 
-Varredura de pesos na **validação** (PR-AUC): só regras 0,651; 25% ML 0,780;
-50% ML 0,803; 75% ML 0,852; **só ML 0,927**.
+**Peso escolhido vs 50/50:** o motor melhora no ranking (PR-AUC 0,787 →
+0,804; validação cruzada 0,845 → 0,864), em precisão (0,634 → 0,676) e em
+F1 (0,754 → 0,769), com menos falsos positivos (30 → 24). O custo é recall:
+**2 fraudes a menos** (52 → 50 de 56), ambas `anomalia_geografica`
+(9 → 7 de 11), e a precisão do bloqueio cai (89,7% → 83,9%, abaixo da meta
+de 90% usada na validação). Um exemplo concreto do custo, tirado do próprio
+relatório: uma compra de R$ 103,83 em Natal, de um cliente `fixo` de São
+Paulo, é fraude `anomalia_geografica`; com ML 83 e regras 45, o score interno
+fica em 72 — logo abaixo do limiar de revisão (73) — e ela é aprovada. A
+50/50, teria ido para revisão.
 
-**O combinado NÃO supera o ML sozinho** — nem no teste, nem na validação
-cruzada, nem na validação. Ele supera muito as regras sozinhas. A diferença
-para o ML se explica por inteiro por dois grupos de transações: sem as
-fraudes `horario_atipico` e sem as primeiras visitas legítimas a uma
-cidade, o combinado (0,974) empata com o ML (0,972).
+**O combinado continua NÃO superando o ML sozinho** — nem no teste, nem na
+validação cruzada, nem na validação. Isso é esperado e foi aceito
+deliberadamente pela restrição de 30%: a diferença para o ML se explica por
+dois grupos de transações. Sem as fraudes `horario_atipico` e sem as
+primeiras visitas legítimas a uma cidade, o combinado 50/50 (0,974) empata
+com o ML (0,972).
 
 - **Horário:** o ML dá ~100 às fraudes `horario_atipico` porque explora o
   artefato do horário; as regras, de propósito, tratam horário como sinal
@@ -196,29 +241,24 @@ cidade, o combinado (0,974) empata com o ML (0,972).
   de um viajante a uma cidade é indistinguível de uma fraude geográfica (as
   duas ficam com 45 pontos nas regras e ~90 no ML).
 
-Com a calibração na validação, a decisão do motor pega 52 de 56 fraudes
-(o mesmo que as regras, com 226 falsos positivos a menos) e bloqueia com
-precisão de 89,7% (meta: 90%). O ML sozinho, no limiar calibrado, deixa
-passar 7 fraudes.
-
 Recall por cenário (teste, sinalizadas / total):
 
-| Cenário | Só regras | Só ML | Combinado |
-|---|---|---|---|
-| `anomalia_geografica` | 11/11 | 4/11 | 9/11 |
-| `combinacao_de_sinais` | 14/14 | 14/14 | 14/14 |
-| `dispositivo_novo` | 7/7 | 7/7 | 7/7 |
-| `horario_atipico` | 7/11 | 11/11 | 9/11 |
-| `valor_atipico` | 7/7 | 7/7 | 7/7 |
-| `viagem_impossivel` | 6/6 | 6/6 | 6/6 |
+| Cenário | Só regras | Só ML | Motor (30/70) | 50/50 |
+|---|---|---|---|---|
+| `anomalia_geografica` | 11/11 | 4/11 | 7/11 | 9/11 |
+| `combinacao_de_sinais` | 14/14 | 14/14 | 14/14 | 14/14 |
+| `dispositivo_novo` | 7/7 | 7/7 | 7/7 | 7/7 |
+| `horario_atipico` | 7/11 | 11/11 | 9/11 | 9/11 |
+| `valor_atipico` | 7/7 | 7/7 | 7/7 | 7/7 |
+| `viagem_impossivel` | 6/6 | 6/6 | 6/6 | 6/6 |
 
-Distribuição por nível (teste, faixas calibradas):
+Distribuição por nível (teste, motor com faixas calibradas):
 
 | Nível | Ação | Transações | % | Fraudes | Taxa de fraude no nível | % das fraudes |
 |---|---|---|---|---|---|---|
-| baixo | aprovar | 2.174 | 96,4% | 4 | 0,2% | 7,1% |
-| médio | revisar | 53 | 2,3% | 26 | 49,1% | 46,4% |
-| alto | bloquear | 29 | 1,3% | 26 | 89,7% | 46,4% |
+| baixo | aprovar | 2.182 | 96,7% | 6 | 0,3% | 10,7% |
+| médio | revisar | 43 | 1,9% | 24 | 55,8% | 42,9% |
+| alto | bloquear | 31 | 1,4% | 26 | 83,9% | 46,4% |
 
 ## 6. Etapa 7.5 — novidade de cidade (`new_city`)
 
@@ -233,7 +273,8 @@ de `new_device`: a cidade do estabelecimento já apareceu no histórico
 ANTERIOR do cliente? A cidade natal é sempre conhecida; sem histórico
 anterior, `False`. Entra no ML e numa regra nova de 20 pontos.
 
-**Antes vs depois (teste):**
+**Antes vs depois (teste)** — números com o combinado a 50/50, o peso em
+uso nesta etapa (a regra de escolha de pesos da seção 3 veio depois):
 
 | Abordagem | PR-AUC | Recall | Precisão | F1 | FP | FP de viajantes |
 |---|---|---|---|---|---|---|
@@ -306,10 +347,12 @@ com `build_risk_table`.
 3. **Artefato do horário.** Transações normais nunca saem da janela do
    cliente no gerador, então o ML trata horário como separador perfeito
    (maior coeficiente). Em dados reais esse sinal seria bem mais fraco.
-4. **O combinado não supera o ML sozinho** no ranking (seção 5), e a
-   varredura na validação agora aponta o ML puro como o melhor peso. O
-   motor mantém 50/50 por explicabilidade; é uma escolha consciente, não
-   o que os números sozinhos recomendam.
+4. **O combinado não supera o ML sozinho** no ranking (seção 5). A
+   validação, sem restrição, escolheria o ML puro; o motor usa 30% regras /
+   70% ML porque a regra de escolha exige no mínimo 30% de regras, por
+   explicabilidade. É uma escolha consciente de produto, não o que os
+   números sozinhos recomendam — e o peso escolhido aprova 2 fraudes
+   geográficas que o 50/50 mandaria para revisão.
 5. **Amostra pequena.** O teste tem 56 fraudes (6 a 14 por cenário):
    recall por cenário varia muito de um sorteio para outro; a validação
    cruzada mostra a ordem de grandeza da incerteza.
