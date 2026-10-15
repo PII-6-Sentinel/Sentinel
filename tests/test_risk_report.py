@@ -6,14 +6,17 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
-from src.risk.engine import LEVEL_HIGH, LEVEL_LOW, LEVEL_MEDIUM
+from src.risk.engine import LEVEL_HIGH, LEVEL_LOW, LEVEL_MEDIUM, EngineConfig
 from src.risk.report import (
     APPROACH_COMBINED,
-    APPROACH_COMBINED_DEFAULT,
+    APPROACH_COMBINED_5050,
     APPROACH_ML,
     APPROACH_RULES,
+    MIN_RULES_WEIGHT,
+    choose_rules_weight,
     evaluate_risk_engine,
     pick_examples,
 )
@@ -27,12 +30,12 @@ def ev(risk_table):
     return evaluate_risk_engine(risk_table)
 
 
-def test_comparison_has_the_three_approaches_plus_default_bands(ev):
+def test_comparison_has_rules_ml_chosen_weight_and_5050(ev):
     assert ev.comparison["abordagem"].tolist() == [
         APPROACH_RULES,
         APPROACH_ML,
         APPROACH_COMBINED,
-        APPROACH_COMBINED_DEFAULT,
+        APPROACH_COMBINED_5050,
     ]
     for col in ("pr_auc", "roc_auc", "precision", "recall", "f1"):
         assert ev.comparison[col].between(0, 1).all()
@@ -49,11 +52,50 @@ def test_calibrated_bands_are_valid_and_come_from_validation(ev):
     bands = ev.engine.config.bands
     assert 0 <= bands.review_threshold < bands.block_threshold < 100
     assert bands.review_threshold == ev.review_thresholds[APPROACH_COMBINED]
+    assert bands.block_threshold == ev.block_thresholds[APPROACH_COMBINED]
+    assert ev.review_thresholds[APPROACH_COMBINED_5050] < ev.block_thresholds[APPROACH_COMBINED_5050]
 
 
-def test_weight_sweep_covers_pure_rules_to_pure_ml(ev):
-    assert ev.weight_sweep["peso_ml"].tolist() == [0.0, 0.25, 0.5, 0.75, 1.0]
-    assert (ev.weight_sweep["peso_ml"] + ev.weight_sweep["peso_regras"]).eq(1.0).all()
+def test_weight_sweep_covers_0_to_100_percent_rules_in_steps_of_10(ev):
+    assert ev.weight_sweep["peso_regras"].tolist() == pytest.approx([k / 10 for k in range(11)])
+    assert (ev.weight_sweep["peso_ml"] + ev.weight_sweep["peso_regras"]).round(10).eq(1.0).all()
+    assert ev.weight_sweep["elegivel"].tolist() == [w >= MIN_RULES_WEIGHT - 1e-9 for w in ev.weight_sweep["peso_regras"]]
+
+
+def _sweep(pr_aucs):
+    rules = [k / 10 for k in range(11)]
+    return pd.DataFrame(
+        {
+            "peso_regras": rules,
+            "peso_ml": [round(1 - w, 10) for w in rules],
+            "pr_auc": pr_aucs,
+            "roc_auc": [0.9] * 11,
+            "elegivel": [w >= MIN_RULES_WEIGHT - 1e-9 for w in rules],
+        }
+    )
+
+
+def test_choose_rules_weight_respects_the_minimum_even_if_pure_ml_is_best():
+    # ML puro (0% regras) é o melhor da grade, mas está fora da restrição
+    aucs = [0.99, 0.95, 0.90, 0.80, 0.85, 0.70, 0.60, 0.50, 0.40, 0.30, 0.20]
+    assert choose_rules_weight(_sweep(aucs)) == pytest.approx(0.4)
+
+
+def test_choose_rules_weight_breaks_ties_towards_more_rules():
+    aucs = [0.5] * 3 + [0.80, 0.80, 0.70] + [0.6] * 5
+    assert choose_rules_weight(_sweep(aucs)) == pytest.approx(0.4)
+
+
+def test_engine_uses_the_weight_chosen_on_validation(ev):
+    chosen = choose_rules_weight(ev.weight_sweep)
+    assert ev.engine.config.behavior_weight == pytest.approx(chosen)
+    assert ev.engine.config.ml_weight == pytest.approx(1 - chosen)
+    assert chosen >= MIN_RULES_WEIGHT
+
+
+def test_explicit_config_overrides_the_weight_choice(risk_table):
+    fixed = evaluate_risk_engine(risk_table, config=EngineConfig(ml_weight=0.5, behavior_weight=0.5))
+    assert fixed.engine.config.behavior_weight == pytest.approx(0.5)
 
 
 def test_scenario_recall_covers_every_fraud_in_the_test_set(ev):
@@ -67,6 +109,12 @@ def test_level_distribution_adds_up(ev):
     assert dist["transacoes"].sum() == len(ev.split.test)
     assert dist["fraudes"].sum() == int(ev.split.test["is_fraud"].sum())
     assert dist["pct_transacoes"].sum() == pytest.approx(1.0)
+
+
+def test_stability_covers_the_four_approaches(ev):
+    assert ev.stability["abordagem"].tolist() == [
+        APPROACH_RULES, APPROACH_ML, APPROACH_COMBINED, APPROACH_COMBINED_5050,
+    ]
 
 
 def test_stability_uses_five_customer_folds(ev):

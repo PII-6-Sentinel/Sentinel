@@ -19,11 +19,12 @@ from src.synthetic.features import (
     amount_deviation,
     implied_travel_speed,
     location_distance,
+    new_city_flag,
     new_device_flag,
     unusual_hour,
 )
 from src.synthetic.generator import MAX_PLAUSIBLE_SPEED_KMH, populate_database
-from src.synthetic.models import BehaviorProfile, Customer, Transaction
+from src.synthetic.models import BehaviorProfile, Customer, Merchant, Transaction
 
 SAO_PAULO = (-23.5505, -46.6333)
 RIO = (-22.9068, -43.1729)  # ~360 km de São Paulo
@@ -339,3 +340,119 @@ def test_features_reflect_the_scenario_that_generated_each_fraud(populated):
 
     geo = table[table["fraud_scenario"] == "anomalia_geografica"]
     assert geo["location_distance"].mean() > 2 * normal["location_distance"].median()
+
+
+# ---------------------------------------------------------------------------
+# new_city_flag (função pura)
+# ---------------------------------------------------------------------------
+
+
+def home(city="São Paulo"):
+    return SimpleNamespace(home_city=city)
+
+
+def test_new_city_flag_without_history_is_false():
+    """Primeira transação do cliente: mesma decisão de new_device."""
+    assert new_city_flag("Paris", home(), seen_cities=set()) is False
+
+
+def test_new_city_flag_for_a_city_never_seen_before():
+    assert new_city_flag("Paris", home(), seen_cities={"São Paulo", "Rio de Janeiro"}) is True
+
+
+def test_new_city_flag_for_a_repeated_city_is_false():
+    assert new_city_flag("Rio de Janeiro", home(), seen_cities={"São Paulo", "Rio de Janeiro"}) is False
+
+
+def test_home_city_is_always_known():
+    """Mesmo sem nenhuma compra anterior na cidade natal."""
+    assert new_city_flag("São Paulo", home("São Paulo"), seen_cities={"Rio de Janeiro"}) is False
+
+
+# ---------------------------------------------------------------------------
+# new_city no pipeline: cronológico por cliente, sem vazamento
+# ---------------------------------------------------------------------------
+
+
+def _expected_new_city(session):
+    """Recalcula new_city do zero, transação a transação, olhando SÓ o
+    passado de cada cliente — a referência contra a qual o pipeline é comparado.
+    """
+    rows = session.execute(
+        select(Transaction.id, Transaction.customer_id, Merchant.city, Customer.home_city)
+        .join(Merchant, Merchant.id == Transaction.merchant_id)
+        .join(Customer, Customer.id == Transaction.customer_id)
+        .order_by(Transaction.customer_id, Transaction.timestamp, Transaction.id)
+    ).all()
+    seen, expected = {}, {}
+    for tid, cid, city, home_city in rows:
+        past = seen.setdefault(cid, set())
+        expected[tid] = bool(past) and city != home_city and city not in past
+        past.add(city)
+    return expected
+
+
+def test_pipeline_new_city_matches_a_strictly_chronological_recomputation(populated):
+    engine, _, table = populated
+    with Session(engine) as session:
+        expected = _expected_new_city(session)
+    assert table["new_city"].tolist() == table["transaction_id"].map(expected).tolist()
+
+
+def test_pipeline_new_city_is_false_on_each_customers_first_transaction(populated):
+    _, _, table = populated
+    with Session(populated[0]) as session:
+        firsts = session.execute(
+            select(Transaction.customer_id, Transaction.id).order_by(
+                Transaction.customer_id, Transaction.timestamp, Transaction.id
+            )
+        ).all()
+    first_ids = {}
+    for cid, tid in firsts:
+        first_ids.setdefault(cid, tid)
+    assert not table[table["transaction_id"].isin(first_ids.values())]["new_city"].any()
+
+
+def test_new_city_has_no_temporal_leakage():
+    """Acrescentar transações NO FUTURO não muda o new_city do passado; a
+    transação futura numa cidade inédita é marcada, e uma segunda nessa
+    mesma cidade já não é.
+    """
+    engine = create_engine("sqlite:///:memory:")
+    populate_database(engine, seed=3, n_customers=12)
+
+    with Session(engine) as session:
+        before = build_feature_table(session).set_index("transaction_id")["new_city"]
+
+        customer = session.scalars(select(Customer)).first()
+        last = max(customer.transactions, key=lambda t: t.timestamp)
+        visited = {t.merchant.city for t in customer.transactions} | {customer.home_city}
+        far_merchant = session.scalars(select(Merchant).where(Merchant.city.not_in(visited))).first()
+        assert far_merchant is not None
+
+        def add(ts):
+            tx = Transaction(
+                customer_id=customer.id, card_id=last.card_id, merchant_id=far_merchant.id,
+                device_id=last.device_id, timestamp=ts, amount=last.amount,
+                lat=far_merchant.lat, lon=far_merchant.lon, distance_from_home_km=0.0,
+                is_fraud=False, fraud_scenario=None,
+            )
+            session.add(tx)
+            session.flush()
+            return tx.id
+
+        first_new = add(last.timestamp + timedelta(days=2))
+        second_same = add(last.timestamp + timedelta(days=3))
+        after = build_feature_table(session).set_index("transaction_id")["new_city"]
+
+    assert after.loc[before.index].equals(before)  # o passado não mudou
+    assert bool(after.loc[first_new])  # cidade inédita no futuro: marcada
+    assert not after.loc[second_same]
+
+
+def test_new_city_flags_geographic_anomalies_far_more_than_normal_transactions(populated):
+    _, _, table = populated
+    geo = table[table["fraud_scenario"] == "anomalia_geografica"]
+    normal = table[~table["is_fraud"]]
+    assert geo["new_city"].mean() >= 0.8
+    assert normal["new_city"].mean() < 0.02

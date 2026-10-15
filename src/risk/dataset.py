@@ -8,7 +8,9 @@ transação, colunas que vêm direto do banco:
   ("2.727 km da residência") — `location_distance` é a mesma informação
   em escala log 0-1, boa para o modelo mas ruim para um texto;
 - `device_untrusted`: `not Device.is_trusted` — sinal que existia no banco
-  mas ainda não era feature.
+  mas ainda não era feature;
+- `merchant_city`: cidade do estabelecimento — não é feature (o modelo não
+  a lê), só contexto para o motivo "Primeira compra do cliente nesta cidade".
 """
 
 from __future__ import annotations
@@ -18,12 +20,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.synthetic.feature_pipeline import FEATURE_COLUMNS, build_feature_table
-from src.synthetic.models import Device, Transaction
+from src.synthetic.models import Device, Merchant, Transaction
 
 # Features que o Risk Engine consome (regras e/ou modelo).
 RISK_FEATURES = [*FEATURE_COLUMNS, "distance_from_home_km", "device_untrusted"]
 
-RISK_TABLE_COLUMNS = ["transaction_id", "customer_id", *RISK_FEATURES, "is_fraud", "fraud_scenario"]
+# Colunas descritivas: aparecem nos motivos, nunca entram no modelo.
+CONTEXT_COLUMNS = ["merchant_city"]
+
+RISK_TABLE_COLUMNS = ["transaction_id", "customer_id", *RISK_FEATURES, *CONTEXT_COLUMNS, "is_fraud", "fraud_scenario"]
 
 
 def build_risk_table(session: Session) -> pd.DataFrame:
@@ -39,9 +44,12 @@ def build_risk_table(session: Session) -> pd.DataFrame:
                 Transaction.customer_id,
                 Transaction.distance_from_home_km,
                 Device.is_trusted,
-            ).join(Device, Device.id == Transaction.device_id)
+                Merchant.city,
+            )
+            .join(Device, Device.id == Transaction.device_id)
+            .join(Merchant, Merchant.id == Transaction.merchant_id)
         ).all(),
-        columns=["transaction_id", "customer_id", "distance_from_home_km", "is_trusted"],
+        columns=["transaction_id", "customer_id", "distance_from_home_km", "is_trusted", "merchant_city"],
     )
     extra["device_untrusted"] = ~extra.pop("is_trusted").astype(bool)
 

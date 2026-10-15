@@ -12,6 +12,12 @@ transação nova. É a mesma definição de `build_feature_table` (cliente,
 horário, id), exceto quando há outra transação do mesmo cliente no mesmo
 minuto: a tabela desempata pelo id, e uma transação nova ainda não tem id
 — aqui as do mesmo minuto não contam como anteriores.
+
+Cidade: a tabela usa `Merchant.city`. Uma transação nova recebe só
+coordenadas; sem `city` explícita, usa-se a cidade de referência mais
+próxima (`nearest_city`). Os estabelecimentos do domínio ficam a ~5 km do
+centro da sua cidade e as cidades de referência estão a dezenas de km umas
+das outras, então a inferência coincide com `Merchant.city`.
 """
 
 from __future__ import annotations
@@ -28,11 +34,17 @@ from src.synthetic.features import (
     amount_deviation,
     implied_travel_speed,
     location_distance,
+    new_city_flag,
     new_device_flag,
     unusual_hour,
 )
-from src.synthetic.geo_reference import distance_km
-from src.synthetic.models import Customer, Device, Transaction
+from src.synthetic.geo_reference import CITIES, distance_km
+from src.synthetic.models import Customer, Device, Merchant, Transaction
+
+
+def nearest_city(lat: float, lon: float) -> str:
+    """Nome da cidade de referência mais próxima das coordenadas."""
+    return min(CITIES, key=lambda c: distance_km(lat, lon, c.lat, c.lon)).city
 
 
 def compute_transaction_features(
@@ -44,9 +56,13 @@ def compute_transaction_features(
     lon: float,
     timestamp: datetime,
     device_id: int | None,
+    city: str | None = None,
 ) -> dict[str, Any]:
     """Features de risco (as chaves de `src.risk.dataset.RISK_FEATURES`) de
     uma transação nova, a partir do histórico do cliente no banco.
+
+    `city` = cidade do estabelecimento; se omitida, é inferida das
+    coordenadas (`nearest_city`).
 
     Dispositivo desconhecido (`device_id` que não existe, que pertence a
     outro cliente, ou `None`) é tratado como NÃO confiável: não há registro
@@ -58,13 +74,17 @@ def compute_transaction_features(
     if amount <= 0:
         raise ValueError(f"valor precisa ser > 0, recebido {amount!r}")
 
-    history = session.scalars(
-        select(Transaction)
+    rows = session.execute(
+        select(Transaction, Merchant.city)
+        .join(Merchant, Merchant.id == Transaction.merchant_id)
         .where(Transaction.customer_id == customer_id, Transaction.timestamp < timestamp)
         .order_by(Transaction.timestamp, Transaction.id)
     ).all()
+    history = [tx for tx, _ in rows]
     previous = history[-1] if history else None
     seen_devices = {t.device_id for t in history}
+    seen_cities = {c for _, c in rows}
+    city = city or nearest_city(lat, lon)
 
     km = distance_km(customer.home_lat, customer.home_lon, lat, lon)
     tx = SimpleNamespace(
@@ -85,11 +105,13 @@ def compute_transaction_features(
         "location_distance": location_distance(tx),
         "unusual_hour": unusual_hour(tx, customer),
         "new_device": new_device_flag(tx, seen_devices),
+        "new_city": new_city_flag(city, customer, seen_cities),
         # mesma convenção de build_feature_table: sem transação anterior, 0.0
         "implied_speed_kmh": 0.0 if travel.speed_kmh is None else travel.speed_kmh,
         "is_impossible_travel": travel.is_impossible_travel,
         "distance_from_home_km": km,
         "device_untrusted": not trusted,
+        "merchant_city": city,
     }
 
 
@@ -103,6 +125,7 @@ def score_new_transaction(
     lon: float,
     timestamp: datetime,
     device_id: int | None,
+    city: str | None = None,
 ) -> RiskResult:
     """Calcula as features da transação nova e devolve a avaliação do engine."""
     features = compute_transaction_features(
@@ -113,5 +136,6 @@ def score_new_transaction(
         lon=lon,
         timestamp=timestamp,
         device_id=device_id,
+        city=city,
     )
     return engine.assess(features)

@@ -372,15 +372,18 @@ simulador no app ainda são etapas futuras.
 O núcleo do produto: recebe uma transação do domínio sintético e devolve um
 **Risk Score 0-100**, um **nível** (baixo/médio/alto), uma **ação
 recomendada** (aprovar/revisar/bloquear) e os **motivos** em português,
-ordenados pela contribuição de cada um. Combina dois scores, em partes
-iguais por padrão:
+ordenados pela contribuição de cada um. Combina dois scores, com o peso
+escolhido na validação por uma regra declarada (maior PR-AUC com no mínimo
+30% de peso nas regras, por explicabilidade) — hoje 30% regras / 70% ML:
 
-- **regras explicáveis** (viagem impossível, localização, valor,
-  dispositivo novo, dispositivo não confiável, horário), com pesos
+- **regras explicáveis** (viagem impossível, localização, valor, cidade
+  nova, dispositivo novo, dispositivo não confiável, horário), com pesos
   justificados num único objeto de configuração;
 - **Regressão Logística** treinada só nos dados sintéticos.
 
 Viagem impossível nunca é aprovada automaticamente (piso de nível médio).
+O Risk Score exibido usa uma escala em que os limiares calibrados aparecem
+sempre como 30 e 70 (a decisão é a mesma do score interno).
 Arquitetura, justificativa de cada peso, resultados e limitações:
 [`docs/RISK_ENGINE.md`](docs/RISK_ENGINE.md).
 
@@ -393,10 +396,12 @@ python scripts/run_risk_engine.py
 O relatório compara só regras, só ML e o combinado (PR-AUC, ROC-AUC,
 precisão, recall, F1), mostra o recall por cenário de fraude, a
 distribuição por nível/ação e 3 exemplos explicados. O treino/teste é
-dividido **por cliente** e os limiares são calibrados num conjunto de
-validação separado. Resultado principal, dito sem rodeios: o combinado
-supera muito as regras sozinhas, mas **não supera o ML sozinho** — em boa
-parte porque o ML explora um artefato do gerador (ver a seção 5 do doc).
+dividido **por cliente**; peso e limiares são escolhidos num conjunto de
+validação separado, e o teste é usado uma única vez. Resultado principal, dito sem rodeios: o combinado
+supera muito as regras sozinhas, mas **não supera o ML sozinho** no
+ranking — a diferença vem de um artefato do gerador (horário) e das
+primeiras visitas legítimas a uma cidade, indistinguíveis de fraude
+geográfica com as features atuais (ver as seções 5 e 6 do doc).
 
 Os números validam a lógica do sistema sobre dados **simulados**: os
 rótulos foram gerados a partir das mesmas features que o motor usa, então
@@ -436,7 +441,7 @@ do time com validação estatística, o projeto segue algumas regras fixas
 pytest
 ```
 
-192 testes, nenhum depende de dados baixados/gerados manualmente:
+1.077 testes (a maioria parametrizações da escala de exibição), nenhum depende de dados baixados/gerados manualmente:
 
 - **Camada de avaliação (Kaggle)**: separação entre escore e decisão,
   AUC-PR, thresholds inválidos, validação cruzada (5 folds, threshold
@@ -452,6 +457,8 @@ pytest
   `is_impossible_travel` verdadeiro em `viagem_impossivel`.
 - **Risk Engine** (`tests/test_risk_*.py`): cada regra isolada,
   fronteiras das faixas (30/31, 70/71), piso de viagem impossível,
+  escala de exibição que nunca muda a classificação, `new_city` sem
+  vazamento temporal,
   determinismo, split sem cliente em dois conjuntos, calibração de
   limiares e transação nova coerente com `build_risk_table`. Usam um
   SQLite em memória populado pelo gerador.
@@ -475,7 +482,7 @@ pytest
 - [ ] Rodar `01_exploracao.ipynb` com o dataset real e preencher a seção de conclusões.
 - [x] Features comportamentais sobre o domínio sintético (`src/synthetic/features.py`).
 - [x] Risk Engine: regras + ML, score 0-100, nível, ação e motivos (`src/risk/`, `docs/RISK_ENGINE.md`).
-- [ ] Feature de novidade de localização ("o cliente já esteve nesta cidade?") — ponto cego atual do motor.
+- [x] Feature de novidade de cidade (`new_city`) — ver `docs/RISK_ENGINE.md`, seção 6.
 - [ ] Central de Transações e simulador consumindo o Risk Engine (Etapas 9-10).
 - [ ] Ajustar hiperparâmetros e comparar com balanceamento via SMOTE (não só `class_weight`).
 - [ ] Notebook comparativo formalizando as métricas das três abordagens (hoje só na aplicação).

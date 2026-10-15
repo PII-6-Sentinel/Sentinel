@@ -18,7 +18,7 @@ from src.risk.evaluation import split_by_customer
 from src.risk.new_transaction import compute_transaction_features, score_new_transaction
 from src.synthetic.models import Customer, Device, Transaction
 
-EXACT = ["amount_deviation", "unusual_hour", "new_device", "is_impossible_travel", "device_untrusted"]
+EXACT = ["amount_deviation", "unusual_hour", "new_device", "new_city", "is_impossible_travel", "device_untrusted", "merchant_city"]
 # a distância salva no banco é arredondada a 2 casas; a calculada aqui não
 APPROX = {"distance_from_home_km": 0.01, "location_distance": 1e-3, "implied_speed_kmh": 1e-6}
 
