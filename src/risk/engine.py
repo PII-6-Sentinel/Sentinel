@@ -30,6 +30,15 @@ Faixas de decisão
 Padrão: 0-30 baixo → aprovar; 31-70 médio → revisar; 71-100 alto →
 bloquear. São configuráveis (`DecisionBands`) e, no script de avaliação,
 calibradas num conjunto de VALIDAÇÃO (ver `src/risk/evaluation.py`).
+
+Escala de exibição
+------------------
+Com faixas calibradas (ex.: 56/71), o score interno (`raw_score`) é
+remapeado para a escala exibida (`risk_score`) por uma transformação
+monotônica por partes que leva os limiares calibrados para 30 e 70.
+Assim, quem opera sempre lê "acima de 30 revisa, acima de 70 bloqueia".
+Nível e ação continuam decididos pelo score interno — a transformação
+só muda o número exibido, nunca a decisão (testado exaustivamente).
 """
 
 from __future__ import annotations
@@ -86,9 +95,32 @@ class DecisionBands:
             return LEVEL_MEDIUM
         return LEVEL_HIGH
 
+    def to_display(self, score: int) -> int:
+        """Score interno → escala exibida, em que os limiares desta faixa
+        viram 30 e 70 (os de `DecisionBands()`). Monotônica por partes:
+        [0, revisão] → [0, 30]; (revisão, bloqueio] → [31, 70];
+        (bloqueio, 100] → [71, 100]. Com as faixas padrão é a identidade.
+
+        O arredondamento (piso no 1º trecho, teto nos demais) garante que
+        o nível lido na escala exibida com as faixas padrão é sempre o
+        mesmo nível do score interno com estas faixas.
+        """
+        r, b = self.review_threshold, self.block_threshold
+        dr, db = DISPLAY_BANDS.review_threshold, DISPLAY_BANDS.block_threshold
+        s = int(min(100, max(0, score)))
+        if s <= r:
+            return 0 if r == 0 else (s * dr) // r
+        if s <= b:
+            return dr + math.ceil((s - r) * (db - dr) / (b - r))
+        return db + math.ceil((s - b) * (100 - db) / (100 - b))
+
     def min_score(self, level: str) -> int:
         """Menor score inteiro que pertence ao nível."""
         return {LEVEL_LOW: 0, LEVEL_MEDIUM: self.review_threshold + 1, LEVEL_HIGH: self.block_threshold + 1}[level]
+
+
+# Escala em que o score é EXIBIDO: limiares sempre em 30 e 70.
+DISPLAY_BANDS = DecisionBands()
 
 
 @dataclass(frozen=True)
@@ -112,12 +144,13 @@ class EngineConfig:
 
 @dataclass(frozen=True)
 class RiskResult:
-    risk_score: int
+    risk_score: int  # escala exibida: revisa acima de 30, bloqueia acima de 70
     ml_score: float
     behavior_score: float
     level: str
     action: str
     reasons: list[str]
+    raw_score: int  # score interno, comparado com as faixas calibradas
 
 
 def _round_half_up(values: np.ndarray) -> np.ndarray:
@@ -178,12 +211,13 @@ class RiskEngine:
         reasons = self._reasons(ml, behavior, impossible, score)
 
         return RiskResult(
-            risk_score=score,
+            risk_score=self.config.bands.to_display(score),
             ml_score=round(ml, 1),
             behavior_score=round(behavior.score, 1),
             level=level,
             action=ACTION_BY_LEVEL[level],
             reasons=reasons,
+            raw_score=score,
         )
 
     def _reasons(self, ml: float, behavior, impossible: bool, final_score: int) -> list[str]:
@@ -237,7 +271,8 @@ class RiskEngine:
                 "transaction_id": table["transaction_id"].to_numpy(),
                 "ml_score": ml,
                 "behavior_score": behavior,
-                "risk_score": score,
+                "raw_score": score,
+                "risk_score": [self.config.bands.to_display(int(s)) for s in score],
                 "level": levels,
                 "action": [ACTION_BY_LEVEL[lv] for lv in levels],
             }

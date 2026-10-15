@@ -168,8 +168,9 @@ def evaluate_risk_engine(
     ranking = {
         APPROACH_RULES: beh_test,
         APPROACH_ML: ml_test,
-        APPROACH_COMBINED: out["risk_score"].to_numpy(),
-        APPROACH_COMBINED_DEFAULT: out_default["risk_score"].to_numpy(),
+        # score interno: a escala exibida comprime trechos e criaria empates
+        APPROACH_COMBINED: out["raw_score"].to_numpy(),
+        APPROACH_COMBINED_DEFAULT: out_default["raw_score"].to_numpy(),
     }
     comparison = pd.DataFrame(
         [{"abordagem": a, **classification_metrics(y_test, ranking[a], flagged[a])} for a in flagged]
@@ -212,7 +213,7 @@ def pick_examples(test_scores: pd.DataFrame) -> dict[str, pd.Series]:
 
     - baixo: a transação aprovada com MAIS sinais de regra (mostra um caso
       com algo incomum que ainda assim foi aprovado);
-    - médio: a mais próxima do meio da faixa de revisão;
+    - médio: a mais próxima do meio da faixa de revisão (score interno);
     - alto: a de maior Risk Score (desempate: maior score por regras).
     """
     examples: dict[str, pd.Series] = {}
@@ -223,13 +224,13 @@ def pick_examples(test_scores: pd.DataFrame) -> dict[str, pd.Series]:
         ).iloc[0]
     med = test_scores[test_scores["level"] == LEVEL_MEDIUM]
     if len(med):
-        mid = med["risk_score"].median()
-        examples[LEVEL_MEDIUM] = med.assign(_d=(med["risk_score"] - mid).abs()).sort_values(
+        mid = med["raw_score"].median()
+        examples[LEVEL_MEDIUM] = med.assign(_d=(med["raw_score"] - mid).abs()).sort_values(
             ["_d", "transaction_id"]
         ).iloc[0]
     high = test_scores[test_scores["level"] == LEVEL_HIGH]
     if len(high):
         examples[LEVEL_HIGH] = high.sort_values(
-            ["risk_score", "behavior_score", "transaction_id"], ascending=[False, False, True]
+            ["raw_score", "behavior_score", "transaction_id"], ascending=[False, False, True]
         ).iloc[0]
     return examples

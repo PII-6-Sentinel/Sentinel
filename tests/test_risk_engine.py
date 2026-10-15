@@ -147,7 +147,8 @@ def test_result_fields_are_consistent(engine):
     result = engine.assess(normal_features(new_device=True, device_untrusted=True))
     assert 0 <= result.risk_score <= 100
     assert 0 <= result.ml_score <= 100 and 0 <= result.behavior_score <= 100
-    assert result.level == engine.config.bands.level(result.risk_score)
+    assert result.level == engine.config.bands.level(result.raw_score)
+    assert result.level == DecisionBands().level(result.risk_score)  # escala exibida
     assert result.reasons  # dispositivo novo e não confiável sempre geram motivo
 
 
@@ -198,9 +199,53 @@ def test_bands_change_only_the_decision_not_the_score(engine, split):
     b = engine.with_bands(DecisionBands(10, 20)).assess_frame(sample)
     # o piso de viagem impossível depende das faixas; fora dele o score é idêntico
     mask = ~sample["is_impossible_travel"].to_numpy()
-    assert np.array_equal(a["risk_score"].to_numpy()[mask], b["risk_score"].to_numpy()[mask])
+    assert np.array_equal(a["raw_score"].to_numpy()[mask], b["raw_score"].to_numpy()[mask])
 
 
 def test_config_is_immutable():
     with pytest.raises(dataclasses.FrozenInstanceError):
         EngineConfig().ml_weight = 1.0  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# escala de exibição: limiares calibrados aparecem como 30 e 70
+# ---------------------------------------------------------------------------
+
+BAND_CASES = [(r, b) for r in range(0, 99, 3) for b in range(r + 1, 100, 4)] + [(54, 61), (56, 71), (30, 70)]
+
+
+@pytest.mark.parametrize("review, block", BAND_CASES)
+def test_display_scale_never_changes_the_level(review, block):
+    """Para TODO score interno 0-100: o nível lido na escala exibida (com as
+    faixas padrão 30/70) é idêntico ao nível do score interno com as faixas
+    calibradas. É a garantia de que a escala só muda o número exibido.
+    """
+    bands = DecisionBands(review, block)
+    for raw in range(0, 101):
+        assert DecisionBands().level(bands.to_display(raw)) == bands.level(raw), (review, block, raw)
+
+
+@pytest.mark.parametrize("review, block", BAND_CASES)
+def test_display_scale_is_monotonic_and_maps_thresholds_to_30_and_70(review, block):
+    bands = DecisionBands(review, block)
+    shown = [bands.to_display(raw) for raw in range(0, 101)]
+    assert shown == sorted(shown)
+    assert shown[0] == 0 and shown[100] == 100
+    if review > 0:  # com revisão em 0, o único score "baixo" é o próprio 0, exibido como 0
+        assert bands.to_display(review) == 30
+    assert bands.to_display(block) == 70
+
+
+def test_display_scale_is_the_identity_for_default_bands():
+    assert [DecisionBands().to_display(s) for s in range(101)] == list(range(101))
+
+
+def test_calibrated_engine_classification_is_identical_with_and_without_display(engine, split):
+    """Engine com faixas calibradas: a decisão de cada transação de teste é a
+    mesma lida pelo score interno e pelo exibido.
+    """
+    calibrated = engine.with_bands(DecisionBands(56, 71))
+    out = calibrated.assess_frame(split.test)
+    by_raw = [DecisionBands(56, 71).level(int(s)) for s in out["raw_score"]]
+    by_shown = [DecisionBands().level(int(s)) for s in out["risk_score"]]
+    assert out["level"].tolist() == by_raw == by_shown

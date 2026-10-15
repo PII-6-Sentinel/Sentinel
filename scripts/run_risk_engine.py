@@ -96,6 +96,9 @@ def main() -> None:
     print(f"  critério de revisão : maior limiar com recall >= {TARGET_RECALL:.0%} das fraudes")
     print(f"  critério de bloqueio: menor limiar com precisão >= {TARGET_BLOCK_PRECISION:.0%}")
     print(f"  motor (combinado): baixo 0-{bands.review_threshold} | médio {bands.review_threshold + 1}-{bands.block_threshold} | alto {bands.block_threshold + 1}-100   (padrão: 0-30 | 31-70 | 71-100)")
+    print("  escala exibida: o Risk Score mostrado remapeia esses limiares para 30 e 70")
+    print("  (mesmas decisões; ex.: score interno "
+          f"{bands.review_threshold + 1} -> exibido {bands.to_display(bands.review_threshold + 1)})")
     print(f"  só regras: sinaliza se score > {ev.review_thresholds[APPROACH_RULES]}")
     print(f"  só ML    : sinaliza se score > {ev.review_thresholds[APPROACH_ML]}")
 
@@ -173,7 +176,8 @@ def main() -> None:
                 f" - média do cliente R$ {customer.avg_amount_baseline:,.2f}"
             )
             print(
-                f"    Risk Score {result.risk_score}/100 (ML {result.ml_score:.1f}, regras {result.behavior_score:.1f})"
+                f"    Risk Score {result.risk_score}/100 [interno {result.raw_score}] "
+                f"(ML {result.ml_score:.1f}, regras {result.behavior_score:.1f})"
                 f" -> {ACTION_DESCRIPTION[result.action]}"
             )
             if result.reasons:
