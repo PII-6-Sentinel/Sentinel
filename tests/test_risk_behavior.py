@@ -30,6 +30,7 @@ def features(**overrides):
         "location_distance": 0.16,
         "unusual_hour": 0.0,
         "new_device": False,
+        "new_city": False,
         "device_untrusted": False,
         "implied_speed_kmh": 3.0,
         "is_impossible_travel": False,
@@ -169,3 +170,33 @@ def test_weights_come_only_from_the_config_object():
 def test_config_is_immutable():
     with pytest.raises(dataclasses.FrozenInstanceError):
         CFG.new_device_points = 99.0  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# regra de cidade nova
+# ---------------------------------------------------------------------------
+
+
+def test_new_city_rule():
+    from src.risk.behavior_score import rule_new_city
+
+    assert rule_new_city(features(new_city=False), CFG) is None
+
+    hit = rule_new_city(features(new_city=True, merchant_city="Paris"), CFG)
+    assert hit.rule == "cidade_nova"
+    assert hit.points == CFG.new_city_points
+    assert hit.reason == "Primeira compra do cliente nesta cidade (Paris)"
+
+
+def test_new_city_rule_without_city_name_still_explains():
+    from src.risk.behavior_score import rule_new_city
+
+    hit = rule_new_city(features(new_city=True), CFG)
+    assert hit.reason == "Primeira compra do cliente nesta cidade"
+
+
+def test_far_purchase_in_a_new_city_outscores_a_trip_to_a_known_city():
+    """A separação que motivou a regra: mesma distância, cidade inédita vs conhecida."""
+    trip = features(distance_from_home_km=2500.0)
+    anomaly = features(distance_from_home_km=2500.0, new_city=True)
+    assert behavior_score(anomaly).score - behavior_score(trip).score == pytest.approx(CFG.new_city_points)

@@ -16,6 +16,13 @@ Justificativa dos pesos (pontos máximos de cada regra)
   legítimas comuns (viagens, compras grandes planejadas). Pesam bem menos
   que uma impossibilidade física, e o mesmo entre si: nenhum dos dois é,
   sozinho, mais suspeito que o outro.
+- Cidade nova (20): a primeira compra do cliente numa cidade onde ele
+  nunca esteve é o que separa uma fraude geográfica de uma viagem — um
+  viajante legítimo volta às mesmas cidades. Mas toda primeira visita
+  legítima também dispara, então vale o mesmo que dispositivo novo (outro
+  sinal de "primeira vez"), menos que uma impossibilidade física. Somada
+  à localização (até 25), uma compra longe numa cidade inédita chega a 45
+  pontos; uma viagem para uma cidade já conhecida fica nos 25.
 - Dispositivo novo (20) + não confiável (15): um aparelho nunca visto é
   típico de tomada de conta, mas pessoas trocam de celular; por isso vale
   menos que localização/valor. Se ele também não é confiável, a suspeita
@@ -66,6 +73,9 @@ class BehaviorConfig:
     hour_full_gap_h: float = 4.0
     hour_base_points: float = 5.0
     hour_max_points: float = 15.0
+
+    # Cidade nunca vista no histórico do cliente (nem a cidade natal).
+    new_city_points: float = 20.0
 
     # Dispositivo.
     new_device_points: float = 20.0
@@ -147,6 +157,14 @@ def rule_hour(f: Mapping[str, Any], c: BehaviorConfig) -> RuleHit | None:
     return RuleHit("horario", points, f"Horário fora da janela habitual ({_fmt_dec(gap_h)} h fora)")
 
 
+def rule_new_city(f: Mapping[str, Any], c: BehaviorConfig) -> RuleHit | None:
+    if not bool(f["new_city"]):
+        return None
+    city = f.get("merchant_city")
+    where = f" ({city})" if city else ""
+    return RuleHit("cidade_nova", c.new_city_points, f"Primeira compra do cliente nesta cidade{where}")
+
+
 def rule_new_device(f: Mapping[str, Any], c: BehaviorConfig) -> RuleHit | None:
     if not bool(f["new_device"]):
         return None
@@ -174,6 +192,7 @@ RULES: tuple[Callable[[Mapping[str, Any], BehaviorConfig], RuleHit | None], ...]
     rule_impossible_travel,
     rule_location,
     rule_amount,
+    rule_new_city,
     rule_new_device,
     rule_untrusted_device,
     rule_hour,

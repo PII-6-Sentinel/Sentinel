@@ -39,6 +39,7 @@ def normal_features(**overrides):
         "location_distance": 0.16,
         "unusual_hour": 0.0,
         "new_device": False,
+        "new_city": False,
         "device_untrusted": False,
         "implied_speed_kmh": 3.0,
         "is_impossible_travel": False,
