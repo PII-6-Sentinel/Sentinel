@@ -58,7 +58,7 @@ def render():
                 "Risk Engine",
                 "Central de Transações",
             ],
-            "Situação": ["Pronto", "Pronto", "Pronto", "Em construção", "Em construção"],
+            "Situação": ["Pronto", "Pronto", "Pronto", "Pronto", "Pronto"],
         },
         hide_index=True,
         use_container_width=True,

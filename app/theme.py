@@ -21,6 +21,12 @@ MUTED = "#8AA0C4"
 # todos os gráficos do app — reforça a identidade visual do projeto.
 CLASS_COLORS = {"Legítima": ELECTRIC_BLUE, "Fraude": CORAL}
 
+# Níveis de risco da Central de Transações: azul (baixo) e coral (alto) são
+# as cores do projeto; o médio precisa de uma terceira, âmbar, para ficar
+# distinguível entre os dois.
+AMBER = "#F5B83D"
+LEVEL_COLORS = {"baixo": ELECTRIC_BLUE, "médio": AMBER, "alto": CORAL}
+
 PLOTLY_LAYOUT = dict(
     paper_bgcolor=NAVY,
     plot_bgcolor=NAVY,
@@ -113,6 +119,28 @@ def inject_css() -> None:
             background: rgba(46, 139, 255, 0.12);
             border: 1px solid {ELECTRIC_BLUE};
             color: {ELECTRIC_BLUE};
+        }}
+        .level-badge {{
+            display: inline-block;
+            border-radius: 999px;
+            padding: 0.15rem 0.85rem;
+            font-weight: 700;
+            font-size: 0.95rem;
+            border: 1px solid;
+        }}
+        .level-badge.baixo {{
+            color: {ELECTRIC_BLUE}; border-color: {ELECTRIC_BLUE}; background: rgba(46, 139, 255, 0.12);
+        }}
+        .level-badge.medio {{
+            color: {AMBER}; border-color: {AMBER}; background: rgba(245, 184, 61, 0.12);
+        }}
+        .level-badge.alto {{
+            color: {CORAL}; border-color: {CORAL}; background: rgba(255, 107, 74, 0.15);
+        }}
+        .metric-card .sub {{
+            color: {MUTED};
+            font-size: 0.85rem;
+            margin-top: 0.15rem;
         }}
         </style>
         """,
