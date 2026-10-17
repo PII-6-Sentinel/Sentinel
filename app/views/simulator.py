@@ -12,8 +12,8 @@ O motor de risco é reaproveitado do `st.session_state` se a Central de
 Transações já o treinou; senão, é treinado como uma das etapas.
 
 Toda a lógica vive em `app/simulator.py` (que usa `src/`); aqui só há
-orquestração e exibição. Nada é gravado no banco: o histórico da sessão
-vive só em `st.session_state`.
+orquestração e exibição (componentes visuais em `app/ui.py`). Nada é gravado
+no banco: o histórico da sessão vive só em `st.session_state`.
 """
 
 from datetime import date, datetime
@@ -26,6 +26,7 @@ from simulator import (
     CITY_NAMES,
     NEW_DEVICE,
     SCENARIO_HELP,
+    SCENARIO_NORMAL,
     SCENARIOS,
     CustomerContext,
     FormValues,
@@ -40,17 +41,22 @@ from simulator import (
 )
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-from theme import AMBER, CORAL, ELECTRIC_BLUE, LEVEL_COLORS, MUTED, NAVY, TEXT, apply_plotly_theme
+from theme import ACCENT, LEVEL_COLORS, RISK_HIGH, RISK_MEDIUM, TEXT, TEXT_SECONDARY, apply_plotly_theme
 from ui import (
     ACTION_LABEL,
-    LEVEL_CSS,
     card,
+    empty_state,
+    esc,
     fmt_brl,
     fmt_pct,
     fmt_seconds,
+    html_table,
+    kv_table,
+    level_badge,
     location_map,
     md_brl,
-    rgba,
+    panel,
+    reasons_list,
     style_levels,
 )
 
@@ -61,6 +67,7 @@ ENGINE_KEY = "sim_engine"
 VERDICT_KEY = "sim_verdict"
 HISTORY_KEY = "sim_history"
 FORM_CUSTOMER_KEY = "sim_form_customer"  # cliente para o qual o formulário foi preenchido
+ACTIVE_SCENARIO_KEY = "sim_active_scenario"  # último cenário que preencheu o formulário (destaque do chip)
 
 K_CUSTOMER, K_AMOUNT, K_CITY, K_DATE, K_TIME, K_DEVICE = (
     "sim_customer",
@@ -79,7 +86,7 @@ SIMULATION_NOTICE = "dados simulados; valida a lógica do sistema, não o desemp
 # ----------------------------------------------------------------------
 
 
-def _apply_values(form: FormValues, set_customer: bool = True) -> None:
+def _apply_values(form: FormValues, set_customer: bool = True, scenario: str | None = None) -> None:
     """Preenche os campos do formulário. Só preenche: não analisa nada, e o
     veredito anterior (que já não descreve o formulário) some.
 
@@ -94,6 +101,7 @@ def _apply_values(form: FormValues, set_customer: bool = True) -> None:
     st.session_state[K_TIME] = form.timestamp.time().replace(second=0, microsecond=0)
     st.session_state[K_DEVICE] = form.device_id
     st.session_state[FORM_CUSTOMER_KEY] = form.customer_id
+    st.session_state[ACTIVE_SCENARIO_KEY] = scenario
     st.session_state.pop(VERDICT_KEY, None)
 
 
@@ -125,29 +133,36 @@ def _context_caption(ctx: CustomerContext) -> str:
     )
 
 
-def _render_customer_summary(ctx: CustomerContext) -> None:
-    st.markdown("**Histórico do cliente**")
-    cities = ", ".join(f"{c} ({n})" for c, n in sorted(ctx.city_counts.items(), key=lambda kv: (-kv[1], kv[0])))
+def _customer_panel(ctx: CustomerContext) -> str:
+    cities = ", ".join(f"{esc(c)} ({n})" for c, n in sorted(ctx.city_counts.items(), key=lambda kv: (-kv[1], kv[0])))
     trusted = sum(d.is_trusted for d in ctx.devices)
-    observed = f" (média observada: {md_brl(ctx.observed_avg_amount)})" if ctx.observed_avg_amount else ""
-    st.markdown(
-        "\n".join(
-            [
-                f"- **Cliente:** {ctx.name} (#{ctx.customer_id}) — perfil {ctx.profile}",
-                f"- **Cidade natal:** {ctx.home_city}",
-                f"- **Transações:** {ctx.n_transactions}; valor médio do cliente {md_brl(ctx.avg_amount_baseline)}{observed}",
-                f"- **Janela habitual:** {ctx.window}",
-                f"- **Cidades conhecidas:** {cities or 'nenhuma'}",
-                f"- **Dispositivos:** {len(ctx.devices)} ({trusted} confiáveis)",
-            ]
-        )
+    observed = f" (média observada: {fmt_brl(ctx.observed_avg_amount)})" if ctx.observed_avg_amount else ""
+    body = kv_table(
+        [
+            ("Cliente", f"{esc(ctx.name)} (#{ctx.customer_id}) — perfil {esc(ctx.profile)}"),
+            ("Cidade natal", esc(ctx.home_city)),
+            ("Transações", f"{ctx.n_transactions}; valor médio do cliente {fmt_brl(ctx.avg_amount_baseline)}{observed}"),
+            ("Janela habitual", ctx.window),
+            ("Cidades conhecidas", cities or "nenhuma"),
+            ("Dispositivos", f"{len(ctx.devices)} ({trusted} confiáveis)"),
+        ]
     )
     if len(ctx.recent):
-        recent = ctx.recent.style.format(
-            {"Valor": fmt_brl, "Data/hora": lambda t: pd.Timestamp(t).strftime("%d/%m/%Y %H:%M")}
+        rows = [
+            [
+                str(r["ID"]),
+                pd.Timestamp(r["Data/hora"]).strftime("%d/%m/%Y %H:%M"),
+                fmt_brl(r["Valor"]),
+                esc(r["Cidade"]),
+                esc(r["Dispositivo"]),
+            ]
+            for _, r in ctx.recent.iterrows()
+        ]
+        body += (
+            '<div style="margin-top:20px;font-size:13px;line-height:20px;color:var(--text-secondary);font-weight:500">'
+            "Últimas compras</div>" + html_table(["ID", "Data/hora", "Valor", "Cidade", "Dispositivo"], rows)
         )
-        st.caption("Últimas compras")
-        st.dataframe(recent, hide_index=True)
+    return panel("Histórico do cliente", body)
 
 
 # ----------------------------------------------------------------------
@@ -195,7 +210,7 @@ def _engine_for_session(write):
 
 
 def _line(label: str, detail: str | None, seconds: float | None) -> str:
-    icon = "✅" if seconds is not None else "▫️"
+    icon = ":material/check_circle:" if seconds is not None else ":material/chevron_right:"
     timing = f" ({fmt_seconds(seconds)})" if seconds is not None else ""
     # "R$ x ... R$ y" na mesma linha viraria fórmula LaTeX no markdown do Streamlit
     return f"{icon} **{label}** — {detail.replace('$', chr(92) + '$')}{timing}"
@@ -224,7 +239,7 @@ def _run_simulation(session: Session, form: FormValues) -> None:
             status.update(label="Não foi possível analisar", state="error")
             st.write(str(exc))
             return
-        status.update(label="Análise concluída", state="complete", expanded=True)
+        status.update(label="Raciocínio do Sentinel — análise concluída", state="complete", expanded=True)
 
     st.session_state[VERDICT_KEY] = {
         "result": result,
@@ -241,49 +256,62 @@ def _run_simulation(session: Session, form: FormValues) -> None:
 
 
 def _gauge(score: int, level: str) -> go.Figure:
-    """Risk Score de 0 a 100 com as faixas 30 e 70 sempre visíveis."""
+    """Risk Score de 0 a 100 com as faixas 30 e 70 sempre visíveis e um
+    ponteiro (marcador branco) na posição do score.
+    """
     color = LEVEL_COLORS[level]
     fig = go.Figure(
         go.Indicator(
             mode="gauge+number",
             value=score,
-            number=dict(font=dict(size=56, color=color)),
-            title=dict(text="Risk Score", font=dict(size=16, color=MUTED)),
+            number=dict(font=dict(size=64, color=color)),
             gauge=dict(
-                axis=dict(range=[0, 100], tickvals=[0, 30, 70, 100], tickcolor=MUTED, tickfont=dict(color=TEXT)),
-                bar=dict(color=color, thickness=0.3),
-                bgcolor=NAVY,
+                axis=dict(
+                    range=[0, 100],
+                    tickvals=[0, 30, 70, 100],
+                    tickcolor=TEXT_SECONDARY,
+                    tickfont=dict(color=TEXT_SECONDARY, size=13),
+                ),
+                bar=dict(color="rgba(0,0,0,0)", thickness=0),
+                bgcolor="rgba(0,0,0,0)",
                 borderwidth=0,
                 steps=[
-                    dict(range=[0, 30], color=rgba(ELECTRIC_BLUE, 0.35)),
-                    dict(range=[30, 70], color=rgba(AMBER, 0.35)),
-                    dict(range=[70, 100], color=rgba(CORAL, 0.35)),
+                    dict(range=[0, 30], color=ACCENT),
+                    dict(range=[30, 70], color=RISK_MEDIUM),
+                    dict(range=[70, 100], color=RISK_HIGH),
                 ],
-                threshold=dict(line=dict(color=TEXT, width=3), thickness=0.9, value=score),
+                threshold=dict(line=dict(color=TEXT, width=5), thickness=0.9, value=score),
             ),
         )
     )
     apply_plotly_theme(fig)
-    fig.update_layout(height=320, margin=dict(t=60, b=70, l=30, r=30))
+    fig.update_layout(height=320, margin=dict(t=30, b=84, l=40, r=40))
     fig.add_annotation(
-        text="baixo 0–30 · médio 31–70 · alto 71–100",
+        text="Risk Score",
         x=0.5,
-        y=-0.16,
+        y=-0.03,
         xref="paper",
         yref="paper",
         showarrow=False,
-        font=dict(color=MUTED, size=13),
+        font=dict(color=TEXT_SECONDARY, size=14),
+    )
+    legend = "   ".join(
+        f'<span style="color:{c}">●</span> {name}'
+        for c, name in ((ACCENT, "baixo 0–30"), (RISK_MEDIUM, "médio 31–70"), (RISK_HIGH, "alto 71–100"))
+    )
+    fig.add_annotation(
+        text=legend, x=0.5, y=-0.17, xref="paper", yref="paper", showarrow=False, font=dict(color=TEXT_SECONDARY, size=13)
     )
     return fig
 
 
-def _render_log(entry: dict, expanded: bool) -> None:
+def _render_log(entry: dict) -> None:
     result: SimulationResult = entry["result"]
     total = sum(s.seconds for s in result.steps if s.seconds is not None)
     with st.status(
         f"Raciocínio do Sentinel — análise concluída ({fmt_seconds(total)} nas etapas de cálculo)",
         state="complete",
-        expanded=expanded,
+        expanded=False,
     ):
         for line in entry["lines"]:
             st.write(line)
@@ -293,29 +321,39 @@ def _render_verdict(entry: dict, just_ran: bool) -> None:
     result: SimulationResult = entry["result"]
     a, form, ctx = result.assessment, result.form, result.context
     color = LEVEL_COLORS[a.level]
+    cfg = entry["config"]
 
     st.subheader("Veredito do Sentinel")
-    st.caption(
-        f"{ctx.name} · {md_brl(form.amount)} em {result.city.city} · {form.timestamp:%d/%m/%Y %H:%M} · "
+    st.markdown(
+        f"{esc(ctx.name)} · {md_brl(form.amount)} em {esc(result.city.city)} · {form.timestamp:%d/%m/%Y %H:%M} · "
         f"dispositivo: {'novo, não reconhecido' if form.device_id == NEW_DEVICE else f'#{form.device_id}'}"
     )
     if not just_ran:  # logo após o clique, o status ao vivo já está na tela
-        _render_log(entry, expanded=False)
+        _render_log(entry)
 
-    left, right = st.columns([1.1, 1])
+    left, right = st.columns([1.1, 1], gap="medium")
     with left:
-        st.plotly_chart(_gauge(a.risk_score, a.level), key="sim_gauge")
+        with st.container(key="sx-panel-gauge"):
+            st.plotly_chart(_gauge(a.risk_score, a.level), key="sim_gauge", theme=None)
     with right:
-        badge = f'<span class="level-badge {LEVEL_CSS[a.level]}">nível {a.level}</span>'
         st.markdown(
-            card("Ação recomendada", ACTION_LABEL[a.action], f"{badge}<br>{ACTION_DESCRIPTION[a.action].capitalize()}", color),
+            card(
+                "Ação recomendada",
+                ACTION_LABEL[a.action],
+                f"{level_badge(a.level)}<br>{ACTION_DESCRIPTION[a.action].capitalize()}",
+                color,
+                value_color=color,
+                size="sm",
+            ),
             unsafe_allow_html=True,
         )
-        c1, c2 = st.columns(2)
-        cfg = entry["config"]
-        c1.markdown(card("Score do ML", f"{a.ml_score:.0f}", f"peso {fmt_pct(cfg.ml_weight, 0)}"), unsafe_allow_html=True)
+        c1, c2 = st.columns(2, gap="small")
+        c1.markdown(
+            card("Score do ML", f"{a.ml_score:.0f}", f"peso {fmt_pct(cfg.ml_weight, 0)}", size="xs", dot=False),
+            unsafe_allow_html=True,
+        )
         c2.markdown(
-            card("Score das regras", f"{a.behavior_score:.0f}", f"peso {fmt_pct(cfg.behavior_weight, 0)}"),
+            card("Score das regras", f"{a.behavior_score:.0f}", f"peso {fmt_pct(cfg.behavior_weight, 0)}", size="xs", dot=False),
             unsafe_allow_html=True,
         )
     st.caption(
@@ -324,18 +362,15 @@ def _render_verdict(entry: dict, just_ran: bool) -> None:
         f"Motor: {entry['engine_note']}."
     )
 
-    st.markdown("**Motivos**")
-    if a.reasons:
-        st.markdown("\n".join(f"- {reason}" for reason in a.reasons))
-    else:
-        st.markdown("- Nenhum sinal relevante: a transação está dentro do padrão do cliente.")
+    st.markdown(panel("Motivos", reasons_list(a.reasons, color)), unsafe_allow_html=True)
 
-    map_col, hist_col = st.columns([1, 1])
+    map_col, hist_col = st.columns(2, gap="medium")
     with map_col:
-        st.markdown("**Residência e local da compra**")
-        st.plotly_chart(location_map(result.map_row), key="sim_map")
+        with st.container(key="sx-panel-map"):
+            st.markdown('<div class="sx-panel-title">Residência e local da compra</div>', unsafe_allow_html=True)
+            st.plotly_chart(location_map(result.map_row), key="sim_map", theme=None)
     with hist_col:
-        _render_customer_summary(ctx)
+        st.markdown(_customer_panel(ctx), unsafe_allow_html=True)
 
 
 # ----------------------------------------------------------------------
@@ -369,59 +404,71 @@ def _render_history() -> None:
 # ----------------------------------------------------------------------
 
 
+def _active_chip_style() -> None:
+    """Destaca o chip do último cenário que preencheu o formulário."""
+    active = st.session_state.get(ACTIVE_SCENARIO_KEY)
+    if active:
+        st.markdown(
+            f'<style>.st-key-sim_scenario_{active} [data-testid^="stBaseButton"] '
+            "{background: var(--accent-tint); color: var(--accent); border-color: var(--accent);}</style>",
+            unsafe_allow_html=True,
+        )
+
+
 def _render(session: Session) -> None:
     customers = list_customers(session)
     ids = customers["customer_id"].astype(int).tolist()
-    labels = {
-        int(r.customer_id): f"{r.name} (#{r.customer_id}) — {r.home_city}" for r in customers.itertuples()
-    }
+    labels = {int(r.customer_id): f"{r.name} (#{r.customer_id}) — {r.home_city}" for r in customers.itertuples()}
 
     st.session_state.setdefault(K_CUSTOMER, ids[0])
-    st.markdown("**1. Descreva a transação**")
-    customer_id = st.selectbox(
-        "Cliente (nome — cidade natal)", ids, format_func=labels.get, key=K_CUSTOMER, help="Clientes do banco sintético."
-    )
-    ctx = load_context(session, int(customer_id))
-    scenarios = build_scenarios(ctx)
+    st.subheader("1. Descreva a transação")
+    with st.container(key="sim-form"):
+        customer_id = st.selectbox(
+            "Cliente (nome — cidade natal)", ids, format_func=labels.get, key=K_CUSTOMER, help="Clientes do banco sintético."
+        )
+        ctx = load_context(session, int(customer_id))
+        scenarios = build_scenarios(ctx)
 
-    # primeira abertura ou troca de cliente: formulário com a compra normal dele
-    if st.session_state.get(FORM_CUSTOMER_KEY) != customer_id:
-        _apply_values(scenarios["normal"], set_customer=False)
-    st.caption(_context_caption(ctx))
+        # primeira abertura ou troca de cliente: formulário com a compra normal dele
+        if st.session_state.get(FORM_CUSTOMER_KEY) != customer_id:
+            _apply_values(scenarios[SCENARIO_NORMAL], set_customer=False, scenario=SCENARIO_NORMAL)
+        st.caption(_context_caption(ctx))
 
-    st.markdown("**Cenários de demonstração**")
-    st.caption(
-        "Preenchem o formulário com valores calculados do histórico deste cliente. "
-        "Não analisam nada: o resultado só aparece ao clicar em **Analisar transação**."
-    )
-    per_row = 4  # com 7 cenários numa linha só, os rótulos ficam truncados
-    for start in range(0, len(SCENARIOS), per_row):
-        cols = st.columns(per_row)
-        for col, (key, label) in zip(cols, SCENARIOS[start : start + per_row]):
-            values = scenarios[key]
-            col.button(
-                label,
-                key=f"sim_scenario_{key}",
-                on_click=_apply_values,
-                args=(values,) if values else None,
-                disabled=values is None,
-                help=SCENARIO_HELP[key] if values else "Não há como montar este cenário para este cliente.",
-            )
+        st.markdown('<div class="sx-card-title">Cenários de demonstração</div>', unsafe_allow_html=True)
+        st.caption(
+            "Preenchem o formulário com valores calculados do histórico deste cliente. "
+            "Não analisam nada: o resultado só aparece ao clicar em **Analisar transação**."
+        )
+        with st.container(key="sim-chips"):
+            for key, label in SCENARIOS:
+                values = scenarios[key]
+                st.button(
+                    label,
+                    key=f"sim_scenario_{key}",
+                    on_click=_apply_values,
+                    args=(values, True, key) if values else None,
+                    disabled=values is None,
+                    help=SCENARIO_HELP[key] if values else "Não há como montar este cenário para este cliente.",
+                )
+        _active_chip_style()
 
-    f1, f2, f3, f4, f5 = st.columns([1, 1.2, 1, 1, 1.8])
-    amount = f1.number_input("Valor (R$)", min_value=0.01, step=1.0, format="%.2f", key=K_AMOUNT)
-    city = f2.selectbox("Cidade da compra", CITY_NAMES, key=K_CITY)
-    day = f3.date_input("Data", format="DD/MM/YYYY", min_value=date(2020, 1, 1), max_value=date(2035, 12, 31), key=K_DATE)
-    clock = f4.time_input("Horário", step=60, key=K_TIME)
-    device_ids = [d.id for d in ctx.devices] + [NEW_DEVICE]
-    device = f5.selectbox("Dispositivo", device_ids, format_func=_device_label(ctx), key=K_DEVICE)
+        f1, f2, f3, f4, f5 = st.columns([1, 1.2, 1, 1, 1.8])
+        amount = f1.number_input("Valor (R$)", min_value=0.01, step=1.0, format="%.2f", key=K_AMOUNT)
+        city = f2.selectbox("Cidade da compra", CITY_NAMES, key=K_CITY)
+        day = f3.date_input(
+            "Data", format="DD/MM/YYYY", min_value=date(2020, 1, 1), max_value=date(2035, 12, 31), key=K_DATE
+        )
+        clock = f4.time_input("Horário", step=60, key=K_TIME)
+        device_ids = [d.id for d in ctx.devices] + [NEW_DEVICE]
+        device = f5.selectbox("Dispositivo", device_ids, format_func=_device_label(ctx), key=K_DEVICE)
 
-    form = FormValues(int(customer_id), city, float(amount), datetime.combine(day, clock), int(device))
-    error = validate_timestamp(ctx, form.timestamp)
-    if error:
-        st.warning(error, icon="🕒")
+        form = FormValues(int(customer_id), city, float(amount), datetime.combine(day, clock), int(device))
+        error = validate_timestamp(ctx, form.timestamp)
+        if error:
+            st.warning(error, icon=":material/schedule:")
 
-    run = st.button(RUN_LABEL, type="primary", key="sim_run", disabled=error is not None)
+        run = st.button(RUN_LABEL, type="primary", key="sim_run", disabled=error is not None)
+
     just_ran = False
     if run and error is None:
         _run_simulation(session, form)
@@ -429,11 +476,16 @@ def _render(session: Session) -> None:
 
     entry = st.session_state.get(VERDICT_KEY)
     if entry is None:
-        st.info(
-            "**Nenhuma transação analisada.** Descreva a transação acima (ou use um cenário de demonstração) "
-            f"e clique em **{RUN_LABEL}**. O veredito e o raciocínio do Sentinel só aparecem depois do clique.",
-            icon="▶️",
-        )
+        with st.container(key="sx-panel-sim-empty"):
+            st.markdown(
+                empty_state(
+                    "empty",
+                    "Nenhuma transação analisada",
+                    "Descreva a transação acima (ou use um cenário de demonstração) e clique em Analisar transação. "
+                    "O veredito e o raciocínio do Sentinel só aparecem depois do clique.",
+                ),
+                unsafe_allow_html=True,
+            )
     else:
         _render_verdict(entry, just_ran)
 
@@ -442,7 +494,7 @@ def _render(session: Session) -> None:
 
 def render():
     st.title("Simulador")
-    st.caption(
+    st.markdown(
         "Descreva uma transação e veja o Sentinel analisá-la ao vivo, passo a passo, a partir do histórico do cliente. "
         f"Atenção: {SIMULATION_NOTICE}."
     )
@@ -451,7 +503,7 @@ def render():
         st.error(
             "**Banco sintético não encontrado.** Gere-o com `python scripts/generate_mock_data.py` "
             "(é determinístico: seed fixa) e recarregue a página.",
-            icon="🗄️",
+            icon=":material/database_off:",
         )
         return
 
