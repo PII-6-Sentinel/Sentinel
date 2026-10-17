@@ -1,148 +1,152 @@
-"""Paleta de cores e identidade visual do Sentinel.
+"""Identidade visual do Sentinel — tema escuro, estilo Apple.
 
-Mantido separado das páginas para que todo gráfico Plotly e todo elemento
-de UI customizado (badges, cards) puxe as mesmas cores — a paleta principal
-(azul-marinho/azul-elétrico) já vem do tema nativo do Streamlit em
-`.streamlit/config.toml`; aqui replicamos os mesmos valores em Python para
-uso nos gráficos, e definimos o coral/laranja de destaque para anomalias.
+Aqui ficam os TOKENS de design (a fonte da verdade, vinda do protótipo
+"Sentinel — Redesign Dark") e a injeção do CSS global. O CSS em si vive em
+`app/assets/theme.css` e só usa variáveis (`var(--...)`) geradas a partir
+destas constantes, então trocar um token aqui troca em todo lugar.
+
+Os tokens também servem aos gráficos Plotly (`apply_plotly_theme`) e aos
+componentes HTML de `app/ui.py`. Os nomes antigos (NAVY, ELECTRIC_BLUE,
+CORAL, ...) continuam existindo como apelidos dos tokens novos, porque a
+seção científica (Kaggle) ainda os importa.
+
+`.streamlit/config.toml` repete as cores principais para o tema escuro valer
+mesmo com o sistema operacional em modo claro e para o que o CSS não alcança
+(o canvas do `st.dataframe`).
 """
+
+from pathlib import Path
 
 import streamlit as st
 
-NAVY = "#0A192F"
-NAVY_LIGHT = "#112B4C"
-NAVY_LIGHTER = "#1B3A63"
-ELECTRIC_BLUE = "#2E8BFF"
-CORAL = "#FF6B4A"
-TEXT = "#E6EDF7"
-MUTED = "#8AA0C4"
+ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
-# Cor consistente para "legítima" (azul-elétrico) vs "fraude" (coral) em
-# todos os gráficos do app — reforça a identidade visual do projeto.
-CLASS_COLORS = {"Legítima": ELECTRIC_BLUE, "Fraude": CORAL}
+# ----------------------------------------------------------------------
+# cores
+# ----------------------------------------------------------------------
+BG = "#000000"  # fundo da página e da barra lateral
+SURFACE = "#1C1C1E"  # cartões e tabelas
+SURFACE_RAISED = "#2C2C2E"  # campos, chips, selects
+BORDER = "rgba(255,255,255,0.08)"  # borda de cartões e divisores
+DIVIDER = "rgba(255,255,255,0.06)"  # linhas de tabela e de listas
 
-# Níveis de risco da Central de Transações: azul (baixo) e coral (alto) são
-# as cores do projeto; o médio precisa de uma terceira, âmbar, para ficar
-# distinguível entre os dois.
-AMBER = "#F5B83D"
-LEVEL_COLORS = {"baixo": ELECTRIC_BLUE, "médio": AMBER, "alto": CORAL}
+TEXT = "#F5F5F7"  # texto principal
+TEXT_SECONDARY = "#86868B"  # rótulos e legendas
+# Só para o que não carrega informação (placeholders, numeração decorativa):
+# sobre #000 dá ~3,4:1, abaixo dos 4,5:1 exigidos para texto.
+TEXT_TERTIARY = "#636366"
 
+ACCENT = "#3D8BFF"  # destaque, gráficos, risco baixo
+ACCENT_STRONG = "#1F6FEB"  # botão primário (texto branco, 4,6:1)
+RISK_MEDIUM = "#FFB020"  # nível médio
+RISK_HIGH = "#FF6B57"  # nível alto / anomalia
+LOGO_RING = "#9DB8F0"  # anel do ícone sobre fundo escuro
+
+ACCENT_TINT = "rgba(61,139,255,0.14)"  # fundo do selo "baixo"
+ACCENT_TINT_SELECTED = "rgba(61,139,255,0.10)"  # linha selecionada
+MEDIUM_TINT = "rgba(255,176,32,0.14)"
+HIGH_TINT = "rgba(255,107,87,0.14)"
+WARNING_TINT = "rgba(255,176,32,0.10)"  # bloco do aviso de dados simulados
+
+# Nível de risco -> cor (selo = cor a 100% sobre fundo da mesma cor a 14%).
+LEVEL_COLORS = {"baixo": ACCENT, "médio": RISK_MEDIUM, "alto": RISK_HIGH}
+LEVEL_TINTS = {"baixo": ACCENT_TINT, "médio": MEDIUM_TINT, "alto": HIGH_TINT}
+
+# ----------------------------------------------------------------------
+# tipografia, raios e espaçamento
+# ----------------------------------------------------------------------
+FONT_STACK = 'Inter, -apple-system, "SF Pro Display", "Helvetica Neue", sans-serif'
+FONT_IMPORT = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+
+RADIUS_CARD = 20  # cartões e painéis
+RADIUS_CELL = 16  # células da matriz e avisos
+RADIUS_FIELD = 12  # campos e itens de menu
+RADIUS_PILL = 999  # botões, chips e selos
+
+SPACE_PAGE_MARGIN = 64  # margem lateral da página
+SPACE_SECTION = 80  # distância entre seções
+
+# ----------------------------------------------------------------------
+# apelidos dos nomes antigos (a seção científica ainda os importa)
+# ----------------------------------------------------------------------
+NAVY = BG
+NAVY_LIGHT = SURFACE
+NAVY_LIGHTER = SURFACE_RAISED
+ELECTRIC_BLUE = ACCENT
+CORAL = RISK_HIGH
+AMBER = RISK_MEDIUM
+MUTED = TEXT_SECONDARY
+
+# "legítima" em azul vs "fraude" em coral em todos os gráficos do app
+CLASS_COLORS = {"Legítima": ACCENT, "Fraude": RISK_HIGH}
+
+# ----------------------------------------------------------------------
+# Plotly: um único template escuro
+# ----------------------------------------------------------------------
 PLOTLY_LAYOUT = dict(
-    paper_bgcolor=NAVY,
-    plot_bgcolor=NAVY,
-    font=dict(color=TEXT, family="sans-serif"),
-    legend=dict(bgcolor="rgba(0,0,0,0)"),
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    font=dict(color=TEXT, family=FONT_STACK, size=13),
+    legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color=TEXT_SECONDARY)),
     margin=dict(t=48, b=40, l=40, r=24),
+    colorway=[ACCENT, RISK_HIGH, RISK_MEDIUM, LOGO_RING, TEXT_SECONDARY],
 )
 
 
 def apply_plotly_theme(fig):
-    """Aplica o tema padrão a uma figura Plotly (cores de fundo, fonte, margens)."""
+    """Aplica o template escuro a uma figura Plotly: fundos transparentes (o
+    cartão por trás dá a cor), grade a 6% de branco, fonte Inter.
+    """
     fig.update_layout(**PLOTLY_LAYOUT)
-    fig.update_xaxes(gridcolor=NAVY_LIGHTER, zerolinecolor=NAVY_LIGHTER)
-    fig.update_yaxes(gridcolor=NAVY_LIGHTER, zerolinecolor=NAVY_LIGHTER)
+    fig.update_xaxes(gridcolor=DIVIDER, zerolinecolor=DIVIDER, linecolor=DIVIDER, tickfont=dict(color=TEXT_SECONDARY))
+    fig.update_yaxes(gridcolor=DIVIDER, zerolinecolor=DIVIDER, linecolor=DIVIDER, tickfont=dict(color=TEXT_SECONDARY))
     return fig
 
 
-def inject_css() -> None:
-    """CSS complementar para elementos que o tema nativo do Streamlit não cobre
-    (badges de resultado, cards do SWOT, cabeçalho com o conceito de vigilância).
+# ----------------------------------------------------------------------
+# CSS global
+# ----------------------------------------------------------------------
+def css_variables() -> str:
+    """Bloco `:root` com os tokens, para o CSS usar `var(--...)`."""
+    values = {
+        "bg": BG,
+        "surface": SURFACE,
+        "surface-raised": SURFACE_RAISED,
+        "border": BORDER,
+        "divider": DIVIDER,
+        "text": TEXT,
+        "text-secondary": TEXT_SECONDARY,
+        "text-tertiary": TEXT_TERTIARY,
+        "accent": ACCENT,
+        "accent-strong": ACCENT_STRONG,
+        "risk-medium": RISK_MEDIUM,
+        "risk-high": RISK_HIGH,
+        "logo-ring": LOGO_RING,
+        "accent-tint": ACCENT_TINT,
+        "accent-tint-selected": ACCENT_TINT_SELECTED,
+        "medium-tint": MEDIUM_TINT,
+        "high-tint": HIGH_TINT,
+        "warning-tint": WARNING_TINT,
+        "radius-card": f"{RADIUS_CARD}px",
+        "radius-cell": f"{RADIUS_CELL}px",
+        "radius-field": f"{RADIUS_FIELD}px",
+        "radius-pill": f"{RADIUS_PILL}px",
+        "page-margin": f"{SPACE_PAGE_MARGIN}px",
+        "section-gap": f"{SPACE_SECTION}px",
+        "font": FONT_STACK,
+    }
+    body = "\n".join(f"  --{name}: {value};" for name, value in values.items())
+    return f":root {{\n{body}\n}}"
+
+
+def build_css() -> str:
+    """Todo o CSS do app: fonte (com fallback — funciona offline), variáveis e
+    o arquivo `assets/theme.css`.
     """
-    st.markdown(
-        f"""
-        <style>
-        .sentinel-header {{
-            display: flex;
-            align-items: center;
-            gap: 0.6rem;
-            margin-bottom: 0.2rem;
-        }}
-        .sentinel-header .icon {{
-            font-size: 2.2rem;
-        }}
-        .sentinel-tagline {{
-            color: {MUTED};
-            font-size: 1.05rem;
-            margin-bottom: 1.5rem;
-        }}
-        .metric-card {{
-            background: {NAVY_LIGHT};
-            border: 1px solid {NAVY_LIGHTER};
-            border-radius: 10px;
-            padding: 1rem 1.2rem;
-            height: 100%;
-        }}
-        .metric-card .value {{
-            font-size: 1.8rem;
-            font-weight: 700;
-            color: {ELECTRIC_BLUE};
-        }}
-        .metric-card .label {{
-            color: {MUTED};
-            font-size: 0.85rem;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-        }}
-        .swot-card {{
-            background: {NAVY_LIGHT};
-            border-left: 4px solid {ELECTRIC_BLUE};
-            border-radius: 6px;
-            padding: 0.9rem 1.1rem;
-            height: 100%;
-        }}
-        .swot-card.risk {{
-            border-left-color: {CORAL};
-        }}
-        .swot-card h4 {{
-            margin: 0 0 0.5rem 0;
-            color: {TEXT};
-        }}
-        .swot-card ul {{
-            margin: 0;
-            padding-left: 1.1rem;
-            color: {MUTED};
-        }}
-        .result-badge {{
-            border-radius: 10px;
-            padding: 1.1rem 1.4rem;
-            font-size: 1.4rem;
-            font-weight: 700;
-            text-align: center;
-            margin: 0.6rem 0 1rem 0;
-        }}
-        .result-badge.fraud {{
-            background: rgba(255, 107, 74, 0.15);
-            border: 1px solid {CORAL};
-            color: {CORAL};
-        }}
-        .result-badge.normal {{
-            background: rgba(46, 139, 255, 0.12);
-            border: 1px solid {ELECTRIC_BLUE};
-            color: {ELECTRIC_BLUE};
-        }}
-        .level-badge {{
-            display: inline-block;
-            border-radius: 999px;
-            padding: 0.15rem 0.85rem;
-            font-weight: 700;
-            font-size: 0.95rem;
-            border: 1px solid;
-        }}
-        .level-badge.baixo {{
-            color: {ELECTRIC_BLUE}; border-color: {ELECTRIC_BLUE}; background: rgba(46, 139, 255, 0.12);
-        }}
-        .level-badge.medio {{
-            color: {AMBER}; border-color: {AMBER}; background: rgba(245, 184, 61, 0.12);
-        }}
-        .level-badge.alto {{
-            color: {CORAL}; border-color: {CORAL}; background: rgba(255, 107, 74, 0.15);
-        }}
-        .metric-card .sub {{
-            color: {MUTED};
-            font-size: 0.85rem;
-            margin-top: 0.15rem;
-        }}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    stylesheet = (ASSETS_DIR / "theme.css").read_text(encoding="utf-8")
+    return f"@import url('{FONT_IMPORT}');\n{css_variables()}\n{stylesheet}"
+
+
+def inject_css() -> None:
+    """Injeta o CSS global (chamado uma vez por execução, em app/app.py)."""
+    st.markdown(f"<style>{build_css()}</style>", unsafe_allow_html=True)

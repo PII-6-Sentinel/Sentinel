@@ -48,8 +48,10 @@ def test_single_discreet_entry_point_to_the_scientific_section():
 def test_overview_states_the_product_proposal_and_where_the_science_lives():
     at = _run()
     text = " ".join(m.value for m in at.markdown) + " ".join(i.value for i in at.info)
-    assert "plataforma de análise de risco transacional para" in text
+    # o negrito cobre "Sentinel é uma plataforma de análise de risco transacional"
+    assert "Sentinel é uma plataforma de análise de risco transacional" in text
     assert "instituições financeiras" in text
+    assert "não decide sozinho" in text
     assert "Metodologia Científica (Kaggle)" in text
 
 
@@ -76,7 +78,7 @@ def test_transactions_page_is_the_central_not_a_placeholder(monkeypatch, synthet
     assert not at.exception
     assert not any("Em construção" in w.value for w in at.warning)
     assert "Executar análise de risco" in [b.label for b in at.button]
-    assert any("Nenhuma análise executada" in i.value for i in at.info)
+    assert any("Nenhuma análise executada" in m.value for m in at.markdown)
 
 
 def test_transactions_page_opens_without_the_simulator_state(monkeypatch, synthetic_db_file):
@@ -87,7 +89,22 @@ def test_transactions_page_opens_without_the_simulator_state(monkeypatch, synthe
     assert not at.exception
     assert [s.value for s in at.subheader if s.value == "Veredito do Sentinel"] == []
     assert "Analisar transação" in [b.label for b in at.button]
-    assert any("Nenhuma transação analisada" in i.value for i in at.info)
+    assert any("Nenhuma transação analisada" in m.value for m in at.markdown)
+
+
+def test_overview_ctas_navigate_to_the_central_and_to_the_simulator(monkeypatch, synthetic_db_file):
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(synthetic_db_file))
+    at = _run()
+    _button(at, "Abrir Central de Transações").click().run()
+    assert not at.exception
+    assert at.sidebar.radio(key="nav_product").value == "Central de Transações"
+    assert any("Nenhuma análise executada" in m.value for m in at.markdown)
+
+    at = _run()
+    _button(at, "Testar no Simulador").click().run()
+    assert not at.exception
+    assert at.sidebar.radio(key="nav_product").value == "Simulador"
+    assert "Analisar transação" in [b.label for b in at.button]
 
 
 def test_overview_lists_every_product_component_as_ready():

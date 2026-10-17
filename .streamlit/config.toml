@@ -1,7 +1,34 @@
+# Tema escuro do Sentinel (tokens em app/theme.py; o CSS completo está em
+# app/assets/theme.css). Estas opções fazem o escuro valer mesmo com o
+# sistema operacional em modo claro e colorem o que o CSS não alcança (o
+# canvas do st.dataframe, por exemplo).
 [theme]
 base = "dark"
-primaryColor = "#2E8BFF"
-backgroundColor = "#0A192F"
-secondaryBackgroundColor = "#112B4C"
-textColor = "#E6EDF7"
+primaryColor = "#3D8BFF"
+backgroundColor = "#000000"
+secondaryBackgroundColor = "#1C1C1E"
+textColor = "#F5F5F7"
 font = "sans serif"
+baseRadius = "12px"
+buttonRadius = "full"
+borderColor = "rgba(255,255,255,0.08)"
+dataframeBorderColor = "rgba(255,255,255,0.08)"
+dataframeHeaderBackgroundColor = "#1C1C1E"
+showWidgetBorder = false
+showSidebarBorder = true
+
+# paleta dos avisos (st.warning / st.info / st.error)
+yellowColor = "#FFB020"
+yellowBackgroundColor = "rgba(255,176,32,0.10)"
+yellowTextColor = "#FFB020"
+orangeColor = "#FFB020"
+blueColor = "#3D8BFF"
+blueBackgroundColor = "rgba(61,139,255,0.14)"
+blueTextColor = "#F5F5F7"
+redColor = "#FF6B57"
+redBackgroundColor = "rgba(255,107,87,0.14)"
+redTextColor = "#FF6B57"
+
+[theme.sidebar]
+backgroundColor = "#000000"
+secondaryBackgroundColor = "#1C1C1E"
