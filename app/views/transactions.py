@@ -17,6 +17,7 @@ só há orquestração e exibição.
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from ui import ACTION_LABEL, LEVEL_CSS, card, fmt_brl, fmt_int, fmt_km, fmt_pct, fmt_seconds, location_map, md_brl, style_levels
 from risk_analysis import (
     ACTIONS,
     LEVELS,
@@ -33,23 +34,13 @@ from risk_analysis import (
     run_analysis,
     summarize,
 )
-from theme import (
-    CORAL,
-    ELECTRIC_BLUE,
-    LEVEL_COLORS,
-    NAVY,
-    NAVY_LIGHT,
-    NAVY_LIGHTER,
-    TEXT,
-    apply_plotly_theme,
-)
+from theme import CORAL, ELECTRIC_BLUE, LEVEL_COLORS, apply_plotly_theme
 
 from src.risk.engine import ACTION_BY_LEVEL, ACTION_DESCRIPTION
 
 RESULT_KEY = "risk_analysis"
 SIMULATION_NOTICE = "dados simulados; valida a lógica do sistema, não o desempenho em fraude real"
 
-LEVEL_CSS = {"baixo": "baixo", "médio": "medio", "alto": "alto"}
 SCENARIO_LABEL = {
     "anomalia_geografica": "Anomalia geográfica",
     "combinacao_de_sinais": "Combinação de sinais",
@@ -58,49 +49,11 @@ SCENARIO_LABEL = {
     "valor_atipico": "Valor atípico",
     "viagem_impossivel": "Viagem impossível",
 }
-ACTION_LABEL = {"aprovar": "Aprovar", "revisar": "Revisar", "bloquear": "Bloquear"}
 
 
 # ----------------------------------------------------------------------
 # formatação (pt-BR)
 # ----------------------------------------------------------------------
-
-
-def fmt_int(n) -> str:
-    return f"{int(n):,}".replace(",", ".")
-
-
-def fmt_pct(fraction: float, decimals: int = 1) -> str:
-    return f"{fraction * 100:.{decimals}f}".replace(".", ",") + "%"
-
-
-def fmt_brl(value: float) -> str:
-    return "R$ " + f"{value:,.2f}".replace(",", "#").replace(".", ",").replace("#", ".")
-
-
-def md_brl(value: float) -> str:
-    """`fmt_brl` para texto markdown: o `$` precisa de barra, senão o Streamlit
-    trata o trecho entre dois `$` como fórmula LaTeX.
-    """
-    return fmt_brl(value).replace("$", "\\$")
-
-
-def fmt_km(value: float) -> str:
-    return fmt_int(round(value)) + " km"
-
-
-def fmt_seconds(seconds: float) -> str:
-    return f"{seconds * 1000:.0f} ms" if seconds < 1 else f"{seconds:.2f} s".replace(".", ",")
-
-
-def _card(label: str, value: str, sub: str = "", accent: str | None = None) -> str:
-    style = f' style="border-left: 4px solid {accent};"' if accent else ""
-    value_style = f' style="color: {accent};"' if accent else ""
-    sub_html = f'<div class="sub">{sub}</div>' if sub else ""
-    return (
-        f'<div class="metric-card"{style}><div class="label">{label}</div>'
-        f'<div class="value"{value_style}>{value}</div>{sub_html}</div>'
-    )
 
 
 # ----------------------------------------------------------------------
@@ -180,25 +133,25 @@ def _render_summary(result: AnalysisResult) -> None:
 
     st.subheader("Resumo da análise")
     cols = st.columns(4)
-    cols[0].markdown(_card("Transações analisadas", fmt_int(summary["total"]), "todos os clientes"), unsafe_allow_html=True)
+    cols[0].markdown(card("Transações analisadas", fmt_int(summary["total"]), "todos os clientes"), unsafe_allow_html=True)
     for col, level in zip(cols[1:], LEVELS):
         row = by_level.loc[level]
         col.markdown(
-            _card(f"Nível {level}", fmt_int(row["quantidade"]), f"{fmt_pct(row['percentual'])} das transações", LEVEL_COLORS[level]),
+            card(f"Nível {level}", fmt_int(row["quantidade"]), f"{fmt_pct(row['percentual'])} das transações", LEVEL_COLORS[level]),
             unsafe_allow_html=True,
         )
 
     cols = st.columns(4)
     flagged = by_action.loc[["revisar", "bloquear"]]
     cols[0].markdown(
-        _card("Sinalizadas (revisar + bloquear)", fmt_int(flagged["quantidade"].sum()), f"{fmt_pct(flagged['percentual'].sum())} das transações"),
+        card("Sinalizadas (revisar + bloquear)", fmt_int(flagged["quantidade"].sum()), f"{fmt_pct(flagged['percentual'].sum())} das transações"),
         unsafe_allow_html=True,
     )
     for col, action in zip(cols[1:], ACTIONS):
         row = by_action.loc[action]
         level = next(lv for lv in LEVELS if ACTION_BY_LEVEL[lv] == action)
         col.markdown(
-            _card(f"Ação: {ACTION_LABEL[action]}", fmt_int(row["quantidade"]), f"{fmt_pct(row['percentual'])} das transações", LEVEL_COLORS[level]),
+            card(f"Ação: {ACTION_LABEL[action]}", fmt_int(row["quantidade"]), f"{fmt_pct(row['percentual'])} das transações", LEVEL_COLORS[level]),
             unsafe_allow_html=True,
         )
 
@@ -251,22 +204,6 @@ def _render_filters(result: AnalysisResult):
     )
 
 
-def _style_levels(display):
-    """Colore Risk Score e Nível pela cor do nível (vetorizado)."""
-    styles = pd.DataFrame("", index=display.index, columns=display.columns)
-    for column in ("Risk Score", "Nível"):
-        styles[column] = display["Nível"].map(
-            lambda lv: f"background-color: {_rgba(LEVEL_COLORS[lv], 0.22)}; color: {LEVEL_COLORS[lv]}; font-weight: 700"
-        )
-    return styles
-
-
-def _rgba(hex_color: str, alpha: float) -> str:
-    h = hex_color.lstrip("#")
-    r, g, b = (int(h[i : i + 2], 16) for i in (0, 2, 4))
-    return f"rgba({r}, {g}, {b}, {alpha})"
-
-
 def _render_table(view):
     """Tabela ordenada por Risk Score decrescente; devolve a linha selecionada
     (posição em `view`) ou None.
@@ -286,7 +223,7 @@ def _render_table(view):
     )
     styled = display.style.format(
         {"Valor": fmt_brl, "Data/hora": lambda t: pd.Timestamp(t).strftime("%d/%m/%Y %H:%M")}
-    ).apply(_style_levels, axis=None)
+    ).apply(style_levels, axis=None)
 
     event = st.dataframe(
         styled,
@@ -303,83 +240,6 @@ def _render_table(view):
 # ----------------------------------------------------------------------
 # painel de investigação
 # ----------------------------------------------------------------------
-
-
-def _location_map(row) -> go.Figure:
-    """Residência do cliente, local da compra e a linha entre eles."""
-    home = (float(row["home_lat"]), float(row["home_lon"]))
-    shop = (float(row["tx_lat"]), float(row["tx_lon"]))
-
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scattergeo(
-            lat=[home[0], shop[0]],
-            lon=[home[1], shop[1]],
-            mode="lines",
-            line=dict(width=2, color=CORAL, dash="dot"),
-            hoverinfo="skip",
-            showlegend=False,
-        )
-    )
-    fig.add_trace(
-        go.Scattergeo(
-            lat=[home[0]],
-            lon=[home[1]],
-            mode="markers",
-            marker=dict(size=13, color=ELECTRIC_BLUE, line=dict(width=2, color=TEXT)),
-            name=f"Residência — {row['home_city']}",
-            hovertemplate=f"Residência<br>{row['home_city']}<extra></extra>",
-        )
-    )
-    fig.add_trace(
-        go.Scattergeo(
-            lat=[shop[0]],
-            lon=[shop[1]],
-            mode="markers",
-            marker=dict(size=13, color=CORAL, symbol="diamond", line=dict(width=2, color=TEXT)),
-            name=f"Compra — {row['city']}",
-            hovertemplate=f"Compra<br>{row['city']}<extra></extra>",
-        )
-    )
-
-    # enquadra os dois pontos com folga; abre um mínimo para a mesma cidade
-    # não virar um zoom absurdo
-    lats, lons = [home[0], shop[0]], [home[1], shop[1]]
-
-    def span(values, minimum):
-        mid, half = (min(values) + max(values)) / 2, max((max(values) - min(values)) / 2 * 1.5, minimum)
-        return mid - half, mid + half
-
-    lat0, lat1 = span(lats, 4.0)
-    lon0, lon1 = span(lons, 6.0)
-    # o geo mantém a proporção do recorte; alarga o eixo mais curto até a
-    # proporção do contêiner (~1,4:1) para o mapa ocupar a área disponível
-    lat_mid, lon_mid = (lat0 + lat1) / 2, (lon0 + lon1) / 2
-    half_lat, half_lon = (lat1 - lat0) / 2, (lon1 - lon0) / 2
-    half_lon = max(half_lon, half_lat * 1.4)
-    half_lat = max(half_lat, half_lon / 1.4)
-    lat0, lat1 = lat_mid - half_lat, lat_mid + half_lat
-    lon0, lon1 = lon_mid - half_lon, lon_mid + half_lon
-    fig.update_geos(
-        lataxis_range=[max(lat0, -85), min(lat1, 85)],
-        lonaxis_range=[max(lon0, -180), min(lon1, 180)],
-        showland=True,
-        landcolor=NAVY_LIGHT,
-        showocean=True,
-        oceancolor=NAVY,
-        showcountries=True,
-        countrycolor=NAVY_LIGHTER,
-        coastlinecolor=NAVY_LIGHTER,
-        showframe=False,
-        bgcolor=NAVY,
-    )
-    apply_plotly_theme(fig)
-    fig.update_layout(
-        height=380,
-        margin=dict(t=10, b=10, l=0, r=0),
-        legend=dict(orientation="h", yanchor="bottom", y=-0.05, xanchor="left", x=0),
-    )
-    return fig
 
 
 def _device_text(row) -> str:
@@ -399,13 +259,13 @@ def _render_investigation(result: AnalysisResult, transaction_id: int) -> None:
     top = st.columns([1.3, 1, 1, 1])
     badge = f'<span class="level-badge {LEVEL_CSS[a.level]}">nível {a.level}</span>'
     top[0].markdown(
-        _card("Risk Score final", str(a.risk_score), f"{badge}<br>Ação: {ACTION_DESCRIPTION[a.action]}", color),
+        card("Risk Score final", str(a.risk_score), f"{badge}<br>Ação: {ACTION_DESCRIPTION[a.action]}", color),
         unsafe_allow_html=True,
     )
-    top[1].markdown(_card("Score do ML", f"{a.ml_score:.0f}", f"peso {fmt_pct(cfg.ml_weight, 0)}"), unsafe_allow_html=True)
-    top[2].markdown(_card("Score das regras", f"{a.behavior_score:.0f}", f"peso {fmt_pct(cfg.behavior_weight, 0)}"), unsafe_allow_html=True)
+    top[1].markdown(card("Score do ML", f"{a.ml_score:.0f}", f"peso {fmt_pct(cfg.ml_weight, 0)}"), unsafe_allow_html=True)
+    top[2].markdown(card("Score das regras", f"{a.behavior_score:.0f}", f"peso {fmt_pct(cfg.behavior_weight, 0)}"), unsafe_allow_html=True)
     top[3].markdown(
-        _card("Score interno", str(a.raw_score), f"revisar acima de {cfg.bands.review_threshold} · bloquear acima de {cfg.bands.block_threshold}"),
+        card("Score interno", str(a.raw_score), f"revisar acima de {cfg.bands.review_threshold} · bloquear acima de {cfg.bands.block_threshold}"),
         unsafe_allow_html=True,
     )
     st.caption(
@@ -441,7 +301,7 @@ def _render_investigation(result: AnalysisResult, transaction_id: int) -> None:
         scenario = f" — {SCENARIO_LABEL.get(row['fraud_scenario'], row['fraud_scenario'])}" if row["is_fraud"] else ""
         st.caption(f"Rótulo da simulação (não existe em produção real): {truth}{scenario}.")
     with right:
-        st.plotly_chart(_location_map(row), key="tx_map")
+        st.plotly_chart(location_map(row), key="tx_map")
 
 
 # ----------------------------------------------------------------------
@@ -494,19 +354,19 @@ def _render_efficiency(result: AnalysisResult) -> None:
 
     cols = st.columns(4)
     cols[0].markdown(
-        _card("Fraudes capturadas", f"{m['tp']} de {frauds}", f"{fmt_pct(m['recall'])} das fraudes sinalizadas", ELECTRIC_BLUE),
+        card("Fraudes capturadas", f"{m['tp']} de {frauds}", f"{fmt_pct(m['recall'])} das fraudes sinalizadas", ELECTRIC_BLUE),
         unsafe_allow_html=True,
     )
     cols[1].markdown(
-        _card("Falsos positivos", fmt_int(m["fp"]), f"{fmt_pct(m['fp'] / legit if legit else 0)} das {fmt_int(legit)} legítimas", CORAL),
+        card("Falsos positivos", fmt_int(m["fp"]), f"{fmt_pct(m['fp'] / legit if legit else 0)} das {fmt_int(legit)} legítimas", CORAL),
         unsafe_allow_html=True,
     )
     cols[2].markdown(
-        _card("Fraudes perdidas", fmt_int(m["fn"]), "aprovadas automaticamente", CORAL),
+        card("Fraudes perdidas", fmt_int(m["fn"]), "aprovadas automaticamente", CORAL),
         unsafe_allow_html=True,
     )
     cols[3].markdown(
-        _card("Precisão da sinalização", fmt_pct(m["precision"]), "das sinalizadas, eram fraude"),
+        card("Precisão da sinalização", fmt_pct(m["precision"]), "das sinalizadas, eram fraude"),
         unsafe_allow_html=True,
     )
 
