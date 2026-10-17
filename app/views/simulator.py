@@ -394,17 +394,19 @@ def _render(session: Session) -> None:
         "Preenchem o formulário com valores calculados do histórico deste cliente. "
         "Não analisam nada: o resultado só aparece ao clicar em **Analisar transação**."
     )
-    cols = st.columns(len(SCENARIOS))
-    for col, (key, label) in zip(cols, SCENARIOS):
-        values = scenarios[key]
-        col.button(
-            label,
-            key=f"sim_scenario_{key}",
-            on_click=_apply_values,
-            args=(values,) if values else None,
-            disabled=values is None,
-            help=SCENARIO_HELP[key] if values else "Não há como montar este cenário para este cliente.",
-        )
+    per_row = 4  # com 7 cenários numa linha só, os rótulos ficam truncados
+    for start in range(0, len(SCENARIOS), per_row):
+        cols = st.columns(per_row)
+        for col, (key, label) in zip(cols, SCENARIOS[start : start + per_row]):
+            values = scenarios[key]
+            col.button(
+                label,
+                key=f"sim_scenario_{key}",
+                on_click=_apply_values,
+                args=(values,) if values else None,
+                disabled=values is None,
+                help=SCENARIO_HELP[key] if values else "Não há como montar este cenário para este cliente.",
+            )
 
     f1, f2, f3, f4, f5 = st.columns([1, 1.2, 1, 1, 1.8])
     amount = f1.number_input("Valor (R$)", min_value=0.01, step=1.0, format="%.2f", key=K_AMOUNT)

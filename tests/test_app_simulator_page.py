@@ -314,6 +314,19 @@ def test_impossible_travel_scenario_fires_the_impossible_travel_signal(page):
     assert any("Viagem impossível" in r for r in result.assessment.reasons)
 
 
+def test_combined_signals_scenario_shows_the_three_signals_in_the_verdict(page):
+    _analyze(page, sim.SCENARIO_COMBINED)
+    result = page.session_state[VERDICT]["result"]
+    f = result.features
+    assert f["new_device"] and f["unusual_hour"] > 0 and f["amount_deviation"] == pytest.approx(9.0, abs=0.01)
+    text = _texts(page)
+    for reason in result.assessment.reasons:
+        assert reason in text
+    for expected in ("Dispositivo nunca usado", "fora da janela habitual", "acima da média"):
+        assert expected in text
+    assert result.assessment.level != "baixo"
+
+
 def test_page_verdict_equals_score_new_transaction(page, db):
     _analyze(page, sim.SCENARIO_NEW_CITY)
     form = _form(page)

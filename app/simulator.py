@@ -57,6 +57,7 @@ SCENARIO_ATYPICAL_AMOUNT = "valor_atipico"
 SCENARIO_ATYPICAL_HOUR = "horario_atipico"
 SCENARIO_NEW_DEVICE = "dispositivo_novo"
 SCENARIO_NEW_CITY = "cidade_nova"
+SCENARIO_COMBINED = "combinacao_de_sinais"
 SCENARIOS = [
     (SCENARIO_NORMAL, "Compra normal"),
     (SCENARIO_IMPOSSIBLE_TRAVEL, "Viagem impossível"),
@@ -64,6 +65,7 @@ SCENARIOS = [
     (SCENARIO_ATYPICAL_HOUR, "Horário atípico"),
     (SCENARIO_NEW_DEVICE, "Dispositivo novo"),
     (SCENARIO_NEW_CITY, "Cidade nova"),
+    (SCENARIO_COMBINED, "Combinação de sinais"),
 ]
 
 # O que cada cenário preenche (tooltip do botão).
@@ -74,6 +76,7 @@ SCENARIO_HELP = {
     SCENARIO_ATYPICAL_HOUR: "Horário do lado oposto da janela habitual do cliente, no resto igual à compra normal.",
     SCENARIO_NEW_DEVICE: "Dispositivo novo, não reconhecido, no resto igual à compra normal.",
     SCENARIO_NEW_CITY: "Cidade que o cliente nunca visitou, a cerca de 2.000 km da residência.",
+    SCENARIO_COMBINED: "Dispositivo novo, horário do lado oposto da janela habitual e cerca de 10x o valor médio, na cidade natal.",
 }
 
 CITY_BY_NAME: dict[str, CityRef] = {c.city: c for c in CITIES}
@@ -296,6 +299,10 @@ def build_scenarios(ctx: CustomerContext) -> dict[str, FormValues | None]:
         SCENARIO_ATYPICAL_AMOUNT: form(home, round(10 * ctx.avg_amount_baseline, 2), _next_slot(ctx, home, usual)),
         SCENARIO_ATYPICAL_HOUR: form(home, avg, _next_slot(ctx, home, (usual + 12 * 60) % (24 * 60))),
         SCENARIO_NEW_DEVICE: form(home, avg, _next_slot(ctx, home, usual), NEW_DEVICE),
+        # os três sinais "de conta" juntos: aparelho novo + horário oposto + ~10x a média
+        SCENARIO_COMBINED: form(
+            home, round(10 * ctx.avg_amount_baseline, 2), _next_slot(ctx, home, (usual + 12 * 60) % (24 * 60)), NEW_DEVICE
+        ),
     }
 
     # viagem impossível: a cidade mais distante de ONDE o cliente comprou por

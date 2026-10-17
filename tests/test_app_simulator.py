@@ -97,10 +97,12 @@ def test_context_summarizes_the_real_history(db, customer_ids):
 # ----------------------------------------------------------------------
 
 
-def test_scenarios_are_exactly_the_six_requested_ones():
+def test_scenarios_are_exactly_the_seven_requested_ones():
     assert [k for k, _ in sim.SCENARIOS] == [
         "normal", "viagem_impossivel", "valor_atipico", "horario_atipico", "dispositivo_novo", "cidade_nova",
+        "combinacao_de_sinais",
     ]
+    assert dict(sim.SCENARIOS)["combinacao_de_sinais"] == "Combinação de sinais"
 
 
 def test_scenario_forms_carry_inputs_only_never_a_result():
@@ -149,6 +151,17 @@ def test_atypical_amount_is_about_ten_times_the_average(db, customer_ids):
 def test_new_device_scenario_uses_the_unrecognized_device_option(db, customer_ids):
     form = sim.build_scenarios(_ctx(db, customer_ids[3]))[sim.SCENARIO_NEW_DEVICE]
     assert form.device_id == sim.NEW_DEVICE
+
+
+def test_combined_scenario_stacks_new_device_atypical_hour_and_amount_from_the_history(db, customer_ids):
+    for cid in customer_ids:
+        ctx = _ctx(db, cid)
+        scenarios = sim.build_scenarios(ctx)
+        combined = scenarios[sim.SCENARIO_COMBINED]
+        assert combined.device_id == sim.NEW_DEVICE  # dispositivo novo (igual ao cenário isolado)
+        assert combined.amount == scenarios[sim.SCENARIO_ATYPICAL_AMOUNT].amount  # ~10x a média
+        assert combined.timestamp == scenarios[sim.SCENARIO_ATYPICAL_HOUR].timestamp  # horário oposto à janela
+        assert combined.city == ctx.home_city  # sem outros sinais: só os três
 
 
 def test_new_city_scenario_picks_a_city_the_customer_never_visited(db, customer_ids):
@@ -224,6 +237,28 @@ def test_new_device_scenario_triggers_the_new_and_untrusted_device_signals(db, r
         assert r.features["new_device"] is True and r.features["device_untrusted"] is True
         reasons = " ".join(r.assessment.reasons)
         assert "Dispositivo nunca usado" in reasons and "Dispositivo não confiável" in reasons
+
+
+def test_combined_scenario_triggers_all_three_signals_for_every_customer(db, risk_engine, customer_ids):
+    for cid in customer_ids:  # TODOS os clientes
+        r = _run(db, risk_engine, cid, sim.SCENARIO_COMBINED)
+        f = r.features
+        assert f["new_device"] is True and f["device_untrusted"] is True
+        assert f["unusual_hour"] > 0
+        assert f["amount_deviation"] == pytest.approx(9.0, abs=0.01)
+        # e nenhum outro: cidade natal, sem viagem impossível
+        assert not f["new_city"] and not f["is_impossible_travel"], cid
+        reasons = " ".join(r.assessment.reasons)
+        for expected in ("Dispositivo nunca usado", "Dispositivo não confiável", "fora da janela habitual", "acima da média"):
+            assert expected in reasons, (cid, expected)
+        assert r.assessment.level != "baixo"  # a combinação leva ao menos a revisão
+
+
+def test_combined_scenario_scores_higher_than_each_of_its_parts(db, risk_engine, customer_ids):
+    for cid in customer_ids[::10]:
+        raw = {k: _run(db, risk_engine, cid, k).assessment.raw_score for k in (
+            sim.SCENARIO_COMBINED, sim.SCENARIO_NEW_DEVICE, sim.SCENARIO_ATYPICAL_HOUR, sim.SCENARIO_ATYPICAL_AMOUNT)}
+        assert raw[sim.SCENARIO_COMBINED] > max(v for k, v in raw.items() if k != sim.SCENARIO_COMBINED), cid
 
 
 def test_new_city_scenario_triggers_the_new_city_signal(db, risk_engine, sample_ids):
