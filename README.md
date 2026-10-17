@@ -23,10 +23,11 @@ Sentinel/
 ├── app/                       # aplicação Streamlit (apresentação/demo)
 │   ├── app.py                 # ponto de entrada: streamlit run app/app.py
 │   ├── theme.py                # paleta de cores e CSS
-│   ├── pipeline.py             # cache de dados/modelos (st.cache_data/cache_resource)
+│   ├── pipeline.py             # cache de dados/modelos do Kaggle (st.cache_data/cache_resource)
+│   ├── risk_analysis.py        # camada fina sobre src/risk/ para a Central (sem Streamlit, sem cache)
 │   └── views/                  # uma página por módulo
 │       ├── overview.py         # PRODUTO: Visão Geral (proposta do Sentinel)
-│       ├── transactions.py     # PRODUTO: Central de Transações (placeholder)
+│       ├── transactions.py     # PRODUTO: Central de Transações (análise de risco ao vivo)
 │       └── scientific/         # 🔬 Metodologia Científica (Kaggle) — atrás de 1 botão
 │           ├── eda.py              # Análise Exploratória
 │           ├── models_page.py      # Comparação de Modelos (+ validação cruzada)
@@ -204,7 +205,45 @@ dataset do Kaggle):
 | Página | O que mostra |
 |---|---|
 | **Visão Geral** | A proposta do Sentinel, os sinais que considera, o estado do projeto e (recolhido) o planejamento SWOT/GUT |
-| **Central de Transações** | Placeholder — "Em construção", depende do Risk Engine (próximas etapas) |
+| **Central de Transações** | A tela principal do produto: abre vazia e, ao clicar em "Executar análise de risco", processa o banco sintético ao vivo (ver abaixo) |
+
+#### Central de Transações
+
+Precisa do banco sintético (`python scripts/generate_mock_data.py`, seção
+6); sem ele a página explica o que fazer em vez de quebrar. **Nada vem
+pré-calculado**: ao abrir, a página está vazia (só o botão e a lista do que
+vai acontecer) e não há `st.cache_*` rodando a análise. Só o clique em
+**Executar análise de risco** processa:
+
+1. um `st.status` mostra cada etapa e o tempo que ela levou — carregando
+   transações do banco, calculando features comportamentais, aplicando o
+   modelo de ML, aplicando as regras, combinando no Risk Score, classificando
+   por nível;
+2. o resultado vai para `st.session_state`, então filtros e seleção de linha
+   reexecutam só a página, nunca a análise (o botão "Limpar resultado"
+   volta ao estado vazio);
+3. **resumo** com total, e quantidade e percentual por nível e por ação;
+4. **tabela investigável**, ordenada por Risk Score decrescente (colorido
+   por nível), com filtros de nível, ação, cliente, perfil, faixa de valor e
+   conjunto (treino/validação/teste). Clicar numa linha — ou digitar o ID da
+   transação — abre o **painel de investigação**: valor, cidade, horário,
+   cliente, local habitual, distância da residência, dispositivo, score do ML
+   e das regras separados, Risk Score final, nível, ação recomendada, os
+   motivos em português e um mapa (residência, local da compra e a linha
+   entre eles);
+5. **eficiência medida ao vivo**: a decisão do sistema contra o rótulo da
+   simulação (`is_fraud`) — fraudes capturadas, falsos positivos, matriz de
+   confusão — calculada **só sobre os clientes de teste** (o mesmo split por
+   cliente da avaliação do motor), sempre com o aviso "dados simulados;
+   valida a lógica do sistema, não o desempenho em fraude real".
+
+A análise treina o ML nos clientes de treino, escolhe o peso e calibra as
+faixas nos de validação (as mesmas regras de `src/risk/report.py`) e aplica o
+resultado a todas as transações; por isso a tabela mostra a coluna
+"Conjunto", e as linhas de treino/validação nunca entram nas métricas. A
+lógica vive em `app/risk_analysis.py` e é testada contra
+`evaluate_risk_engine` e `RiskEngine.assess_frame` (mesmos pesos, faixas e
+decisões); a página só orquestra e exibe.
 
 **🔬 Metodologia Científica (Kaggle)** — um único botão discreto no rodapé
 da barra lateral ("🔬 Ver Metodologia Científica (Kaggle) →") abre esta
@@ -364,8 +403,8 @@ fixa (`--seed`, default 42) — rodar de novo produz exatamente o mesmo
 banco; use `--force` para sobrescrever um banco já existente, ou
 `--n-customers` para gerar um volume diferente.
 
-O Risk Engine (seção 7) consome este banco. A Central de Transações e o
-simulador no app ainda são etapas futuras.
+O Risk Engine (seção 7) e a Central de Transações (seção 5) consomem este
+banco. O simulador de transação nova no app ainda é uma etapa futura.
 
 ## 7. Risk Engine
 
@@ -441,7 +480,7 @@ do time com validação estatística, o projeto segue algumas regras fixas
 pytest
 ```
 
-1.077 testes (a maioria parametrizações da escala de exibição), nenhum depende de dados baixados/gerados manualmente:
+1.139 testes (a maioria parametrizações da escala de exibição), nenhum depende de dados baixados/gerados manualmente:
 
 - **Camada de avaliação (Kaggle)**: separação entre escore e decisão,
   AUC-PR, thresholds inválidos, validação cruzada (5 folds, threshold
@@ -462,6 +501,14 @@ pytest
   determinismo, split sem cliente em dois conjuntos, calibração de
   limiares e transação nova coerente com `build_risk_table`. Usam um
   SQLite em memória populado pelo gerador.
+- **Central de Transações** (`tests/test_app_risk_analysis.py`,
+  `tests/test_app_transactions.py`): a camada de análise produz os mesmos
+  pesos, faixas e decisões que `evaluate_risk_engine` e
+  `RiskEngine.assess_frame`; a eficiência usa só clientes de teste (estragar
+  os rótulos de treino/validação não a altera); filtros; painel coerente com
+  a tabela. Com `AppTest`: a página abre vazia e **não executa a análise** ao
+  abrir, os resultados só existem depois do clique, e filtros/seleção não a
+  reexecutam. Usam um SQLite temporário em arquivo, nunca o banco real.
 - **Domínio sintético** (`tests/test_synthetic_data.py`): volume de
   clientes/transações dentro do esperado, taxa de fraude na faixa (~3%),
   nenhuma `distance_from_home_km` negativa, que toda transação
@@ -483,6 +530,7 @@ pytest
 - [x] Features comportamentais sobre o domínio sintético (`src/synthetic/features.py`).
 - [x] Risk Engine: regras + ML, score 0-100, nível, ação e motivos (`src/risk/`, `docs/RISK_ENGINE.md`).
 - [x] Feature de novidade de cidade (`new_city`) — ver `docs/RISK_ENGINE.md`, seção 6.
-- [ ] Central de Transações e simulador consumindo o Risk Engine (Etapas 9-10).
+- [x] Central de Transações: análise de risco ao vivo, tabela investigável, painel, eficiência no teste (`app/views/transactions.py`).
+- [ ] Simulador de transação nova no app (Etapa 10).
 - [ ] Ajustar hiperparâmetros e comparar com balanceamento via SMOTE (não só `class_weight`).
 - [ ] Notebook comparativo formalizando as métricas das três abordagens (hoje só na aplicação).
