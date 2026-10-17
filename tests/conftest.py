@@ -105,3 +105,20 @@ def risk_table(synthetic_engine):
 
     with Session(synthetic_engine) as session:
         return build_risk_table(session)
+
+
+@pytest.fixture(scope="session")
+def synthetic_db_file(tmp_path_factory):
+    """Banco SQLite em ARQUIVO temporário (mesmo gerador, seed 42, 130
+    clientes). O app abre o banco por caminho, então os testes da Central de
+    Transações precisam de um arquivo — nunca o data/synthetic/sentinel.db real.
+    """
+    from sqlalchemy import create_engine
+
+    from src.synthetic.generator import populate_database
+
+    path = tmp_path_factory.mktemp("synthetic_db") / "sentinel_test.db"
+    engine = create_engine(f"sqlite:///{path}")
+    populate_database(engine)
+    engine.dispose()
+    return path
