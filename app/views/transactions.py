@@ -11,13 +11,11 @@ O resultado fica em `st.session_state`, então filtros e seleção de linha
 reexecutam apenas o script (barato), nunca a análise.
 
 Toda a lógica vive em `app/risk_analysis.py` (que usa `src/risk/`); aqui
-só há orquestração e exibição.
+só há orquestração e exibição (componentes visuais em `app/ui.py`).
 """
 
 import pandas as pd
-import plotly.graph_objects as go
 import streamlit as st
-from ui import ACTION_LABEL, LEVEL_CSS, card, fmt_brl, fmt_int, fmt_km, fmt_pct, fmt_seconds, location_map, md_brl, style_levels
 from risk_analysis import (
     ACTIONS,
     LEVELS,
@@ -34,11 +32,34 @@ from risk_analysis import (
     run_analysis,
     summarize,
 )
-from theme import CORAL, ELECTRIC_BLUE, LEVEL_COLORS, apply_plotly_theme
+from theme import LEVEL_COLORS
+from ui import (
+    ACTION_LABEL,
+    bar_rows,
+    card,
+    chips_html,
+    confusion_matrix_html,
+    empty_state,
+    esc,
+    facts_grid,
+    fmt_brl,
+    fmt_int,
+    fmt_km,
+    fmt_pct,
+    fmt_seconds,
+    html_table,
+    level_badge,
+    location_map,
+    panel,
+    reasons_list,
+    simulation_notice,
+    style_levels,
+)
 
 from src.risk.engine import ACTION_BY_LEVEL, ACTION_DESCRIPTION
 
 RESULT_KEY = "risk_analysis"
+RUN_FLAG = "tx_run_requested"
 SIMULATION_NOTICE = "dados simulados; valida a lógica do sistema, não o desempenho em fraude real"
 
 SCENARIO_LABEL = {
@@ -50,10 +71,13 @@ SCENARIO_LABEL = {
     "viagem_impossivel": "Viagem impossível",
 }
 
-
-# ----------------------------------------------------------------------
-# formatação (pt-BR)
-# ----------------------------------------------------------------------
+# Chips do estado vazio: rótulo curto; a dica (title) é o nome completo da etapa.
+PIPELINE_CHIPS = list(
+    zip(
+        ["Carregar transações", "Features comportamentais", "Modelo de ML", "Regras", "Risk Score", "Níveis"],
+        STEP_LABELS,
+    )
+)
 
 
 # ----------------------------------------------------------------------
@@ -62,7 +86,7 @@ SCENARIO_LABEL = {
 
 
 def _step_line(label: str, seconds: float) -> str:
-    return f"✅ {label} — {fmt_seconds(seconds)}"
+    return f":material/check_circle: {label} — {fmt_seconds(seconds)}"
 
 
 def _run_with_status() -> AnalysisResult | None:
@@ -102,6 +126,11 @@ def _render_step_log(result: AnalysisResult) -> None:
             st.write(_step_line(step.label, step.seconds))
 
 
+def _request_run() -> None:
+    """Callback do botão: a análise só roda no clique (o flag vale uma execução)."""
+    st.session_state[RUN_FLAG] = True
+
+
 def _clear_result() -> None:
     st.session_state.pop(RESULT_KEY, None)
 
@@ -112,14 +141,19 @@ def _clear_result() -> None:
 
 
 def _render_empty_state() -> None:
-    st.info(
-        "**Nenhuma análise executada.** Clique em **Executar análise de risco** para o "
-        "sistema processar as transações do banco agora, passo a passo. Nada é "
-        "calculado antes disso.",
-        icon="▶️",
-    )
-    st.markdown("**O que acontece ao executar:**")
-    st.markdown("\n".join(f"{i}. {label}" for i, label in enumerate(STEP_LABELS, start=1)))
+    with st.container(key="tx-empty"):
+        st.markdown(
+            empty_state(
+                "empty",
+                "Nenhuma análise executada",
+                "Ao clicar, o Sentinel carrega as transações do banco, calcula as features de cada cliente, aplica "
+                "o modelo de ML e as regras e classifica cada transação por nível de risco. Os resultados só "
+                "aparecem depois da execução.",
+            ),
+            unsafe_allow_html=True,
+        )
+        st.button("Executar análise de risco", type="primary", key="tx_run", on_click=_request_run)
+        st.markdown(chips_html(PIPELINE_CHIPS), unsafe_allow_html=True)
 
 
 # ----------------------------------------------------------------------
@@ -177,7 +211,7 @@ def _render_filters(result: AnalysisResult):
     lo, hi = float(frame["amount"].min()), float(frame["amount"].max())
     lo, hi = float(int(lo)), float(int(hi) + 1)
 
-    with st.expander("Filtros", expanded=True):
+    with st.expander("Filtros"):
         c1, c2, c3 = st.columns(3)
         levels = c1.multiselect("Nível", LEVELS, key="tx_f_level", placeholder="Todos")
         actions = c2.multiselect("Ação", ACTIONS, key="tx_f_action", placeholder="Todas")
@@ -243,9 +277,26 @@ def _render_table(view):
 
 
 def _device_text(row) -> str:
-    novelty = "**novo** para este cliente (primeira vez visto)" if row["new_device"] else "já usado antes por este cliente"
-    trust = "**não confiável**" if row["device_untrusted"] else "confiável"
+    novelty = "novo para este cliente (primeira vez visto)" if row["new_device"] else "já usado antes por este cliente"
+    trust = "não confiável" if row["device_untrusted"] else "confiável"
     return f"{row['device_type']} — {novelty}; {trust}"
+
+
+def _score_card(a, cfg) -> str:
+    """Risk Score grande na cor do nível, nível, ação e os dois scores com seus pesos."""
+    color = LEVEL_COLORS[a.level]
+    return (
+        '<div class="metric-card sx-inv">'
+        '<div class="sx-inv-top"><div><div class="label">Risk Score final</div>'
+        f'<div class="value sx-big" style="color: {color};">{a.risk_score}</div></div>'
+        f'<div class="sx-inv-action">{level_badge(a.level)}'
+        f'<div class="a">{ACTION_LABEL[a.action]}</div>'
+        f'<div class="d">{esc(ACTION_DESCRIPTION[a.action])}</div></div></div>'
+        '<div class="sx-inv-split">'
+        f'<div><div class="label">Score do ML</div><div class="v">{a.ml_score:.0f}</div><div class="sub">peso {fmt_pct(cfg.ml_weight, 0)}</div></div>'
+        f'<div><div class="label">Score das regras</div><div class="v">{a.behavior_score:.0f}</div><div class="sub">peso {fmt_pct(cfg.behavior_weight, 0)}</div></div>'
+        "</div></div>"
+    )
 
 
 def _render_investigation(result: AnalysisResult, transaction_id: int) -> None:
@@ -255,19 +306,7 @@ def _render_investigation(result: AnalysisResult, transaction_id: int) -> None:
     cfg = result.engine.config
 
     st.subheader(f"Investigação da transação #{transaction_id}")
-
-    top = st.columns([1.3, 1, 1, 1])
-    badge = f'<span class="level-badge {LEVEL_CSS[a.level]}">nível {a.level}</span>'
-    top[0].markdown(
-        card("Risk Score final", str(a.risk_score), f"{badge}<br>Ação: {ACTION_DESCRIPTION[a.action]}", color),
-        unsafe_allow_html=True,
-    )
-    top[1].markdown(card("Score do ML", f"{a.ml_score:.0f}", f"peso {fmt_pct(cfg.ml_weight, 0)}"), unsafe_allow_html=True)
-    top[2].markdown(card("Score das regras", f"{a.behavior_score:.0f}", f"peso {fmt_pct(cfg.behavior_weight, 0)}"), unsafe_allow_html=True)
-    top[3].markdown(
-        card("Score interno", str(a.raw_score), f"revisar acima de {cfg.bands.review_threshold} · bloquear acima de {cfg.bands.block_threshold}"),
-        unsafe_allow_html=True,
-    )
+    st.markdown(f"Transação #{transaction_id} · {esc(row['customer'])}")
     st.caption(
         f"Score interno {a.raw_score} = {fmt_pct(cfg.ml_weight, 0)} × ML ({a.ml_score:.0f}) + "
         f"{fmt_pct(cfg.behavior_weight, 0)} × regras ({a.behavior_score:.0f}), com o piso de viagem impossível "
@@ -275,67 +314,49 @@ def _render_investigation(result: AnalysisResult, transaction_id: int) -> None:
         f"({cfg.bands.review_threshold} e {cfg.bands.block_threshold}) apareçam como 30 e 70."
     )
 
-    left, right = st.columns([1, 1])
+    left, right = st.columns(2, gap="medium")
     with left:
-        st.markdown("**Fatos da transação**")
-        window = f"{int(row['typical_hour_start'])}h–{int(row['typical_hour_end'])}h"
-        st.markdown(
-            "\n".join(
-                [
-                    f"- **Cliente:** {row['customer']} (#{row['customer_id']}) — perfil {row['profile']}",
-                    f"- **Valor:** {md_brl(row['amount'])} (média habitual do cliente: {md_brl(row['avg_amount_baseline'])})",
-                    f"- **Cidade da compra:** {row['city']} — {row['merchant']}",
-                    f"- **Data e horário:** {row['timestamp']:%d/%m/%Y} às {row['timestamp']:%H:%M} (janela habitual: {window})",
-                    f"- **Local habitual:** {row['home_city']} (residência)",
-                    f"- **Distância da residência:** {fmt_km(row['distance_from_home_km'])}",
-                    f"- **Dispositivo:** {_device_text(row)}",
-                ]
-            )
-        )
-        st.markdown("**Motivos do score**")
-        if a.reasons:
-            st.markdown("\n".join(f"- {reason}" for reason in a.reasons))
-        else:
-            st.markdown("- Nenhum sinal relevante: a transação está dentro do padrão do cliente.")
+        st.markdown(_score_card(a, cfg), unsafe_allow_html=True)
+        st.markdown(panel("Motivos do score", reasons_list(a.reasons, color)), unsafe_allow_html=True)
         truth = "fraude" if row["is_fraud"] else "legítima"
         scenario = f" — {SCENARIO_LABEL.get(row['fraud_scenario'], row['fraud_scenario'])}" if row["is_fraud"] else ""
         st.caption(f"Rótulo da simulação (não existe em produção real): {truth}{scenario}.")
     with right:
-        st.plotly_chart(location_map(row), key="tx_map")
+        with st.container(key="sx-panel-map"):
+            st.markdown('<div class="sx-panel-title">Residência e local da compra</div>', unsafe_allow_html=True)
+            st.plotly_chart(location_map(row), key="tx_map", theme=None)
+        window = f"{int(row['typical_hour_start'])}h–{int(row['typical_hour_end'])}h"
+        st.markdown(
+            panel(
+                "Ficha da transação",
+                facts_grid(
+                    [
+                        ("Cliente", f"{esc(row['customer'])} (#{row['customer_id']}) — perfil {esc(row['profile'])}"),
+                        (
+                            "Valor",
+                            f"{fmt_brl(row['amount'])}"
+                            f'<div class="k">média habitual do cliente: {fmt_brl(row["avg_amount_baseline"])}</div>',
+                        ),
+                        ("Cidade da compra", f"{esc(row['city'])} — {esc(row['merchant'])}"),
+                        (
+                            "Data e horário",
+                            f"{row['timestamp']:%d/%m/%Y} às {row['timestamp']:%H:%M}"
+                            f'<div class="k">janela habitual: {window}</div>',
+                        ),
+                        ("Local habitual", f"{esc(row['home_city'])} (residência)"),
+                        ("Distância da residência", fmt_km(row["distance_from_home_km"])),
+                        ("Dispositivo", esc(_device_text(row))),
+                        ("Conjunto", esc(row["conjunto"])),
+                    ]
+                ),
+            ),
+            unsafe_allow_html=True,
+        )
 
 
 # ----------------------------------------------------------------------
 # eficiência medida ao vivo
 # ----------------------------------------------------------------------
-
-
-def _confusion_figure(m: dict) -> go.Figure:
-    z = [[m["tn"], m["fp"]], [m["fn"], m["tp"]]]
-    names = [["Acertou (aprovou legítima)", "Falso positivo"], ["Fraude perdida", "Fraude capturada"]]
-    text = [[f"<b>{fmt_int(z[i][j])}</b><br>{names[i][j]}" for j in range(2)] for i in range(2)]
-    fig = go.Figure(
-        go.Heatmap(
-            z=[[0, 1], [1, 0]],  # só a cor: diagonal = acerto, fora = erro
-            x=["Aprovou", "Sinalizou (revisar/bloquear)"],
-            y=["Legítima", "Fraude"],
-            text=text,
-            texttemplate="%{text}",
-            textfont=dict(size=15, color="white"),
-            colorscale=[[0, ELECTRIC_BLUE], [1, CORAL]],
-            showscale=False,
-            xgap=3,
-            ygap=3,
-            hoverinfo="skip",
-        )
-    )
-    apply_plotly_theme(fig)
-    fig.update_layout(
-        height=300,
-        margin=dict(t=10, b=40, l=70, r=10),
-        xaxis=dict(title="Decisão do sistema", side="bottom"),
-        yaxis=dict(title="Rótulo da simulação", autorange="reversed"),
-    )
-    return fig
 
 
 def _render_efficiency(result: AnalysisResult) -> None:
@@ -344,7 +365,7 @@ def _render_efficiency(result: AnalysisResult) -> None:
     frauds, legit = eff["frauds"], eff["legit"]
 
     st.subheader("Eficiência medida nesta análise")
-    st.warning(f"**Aviso:** {SIMULATION_NOTICE}.", icon="⚠️")
+    simulation_notice(SIMULATION_NOTICE)
     st.caption(
         f"Calculada agora, só sobre os {eff['customers']} clientes de TESTE "
         f"({fmt_int(eff['transactions'])} transações, {fmt_int(frauds)} fraudes): clientes que o modelo nunca viu no "
@@ -354,39 +375,58 @@ def _render_efficiency(result: AnalysisResult) -> None:
 
     cols = st.columns(4)
     cols[0].markdown(
-        card("Fraudes capturadas", f"{m['tp']} de {frauds}", f"{fmt_pct(m['recall'])} das fraudes sinalizadas", ELECTRIC_BLUE),
+        card("Fraudes capturadas", f"{m['tp']} de {frauds}", f"{fmt_pct(m['recall'])} das fraudes sinalizadas", LEVEL_COLORS["baixo"], size="sm"),
         unsafe_allow_html=True,
     )
     cols[1].markdown(
-        card("Falsos positivos", fmt_int(m["fp"]), f"{fmt_pct(m['fp'] / legit if legit else 0)} das {fmt_int(legit)} legítimas", CORAL),
+        card("Falsos positivos", fmt_int(m["fp"]), f"{fmt_pct(m['fp'] / legit if legit else 0)} das {fmt_int(legit)} legítimas", LEVEL_COLORS["alto"], size="sm"),
         unsafe_allow_html=True,
     )
     cols[2].markdown(
-        card("Fraudes perdidas", fmt_int(m["fn"]), "aprovadas automaticamente", CORAL),
+        card("Fraudes perdidas", fmt_int(m["fn"]), "aprovadas automaticamente", LEVEL_COLORS["alto"], size="sm"),
         unsafe_allow_html=True,
     )
     cols[3].markdown(
-        card("Precisão da sinalização", fmt_pct(m["precision"]), "das sinalizadas, eram fraude"),
+        card("Precisão da sinalização", fmt_pct(m["precision"]), "das sinalizadas, eram fraude", size="sm"),
         unsafe_allow_html=True,
     )
 
-    left, right = st.columns([1.1, 1])
+    left, right = st.columns([1.1, 1], gap="medium")
     with left:
-        st.markdown("**Matriz de confusão**")
-        st.plotly_chart(_confusion_figure(m), key="tx_confusion")
+        st.markdown(
+            panel("Matriz de confusão", confusion_matrix_html(m["tn"], m["fp"], m["fn"], m["tp"])),
+            unsafe_allow_html=True,
+        )
     with right:
-        st.markdown("**Decisão do sistema × rótulo da simulação**")
-        by_action = eff["by_action"].rename(columns={"legítima": "Legítimas", "fraude": "Fraudes"}).map(fmt_int)
-        by_action.index = [ACTION_LABEL[a] for a in by_action.index]
-        by_action.index.name = "Ação"
-        st.dataframe(by_action)
-        st.markdown("**Fraudes capturadas por cenário**")
-        scenario = eff["by_scenario"].copy()
-        scenario["Capturadas"] = [f"{d} de {t}" for d, t in zip(scenario["detected"], scenario["total"])]
-        scenario["%"] = scenario["recall"].map(fmt_pct)
-        scenario.index = [SCENARIO_LABEL.get(s, s.replace("_", " ")) for s in scenario.index]
-        scenario.index.name = "Cenário"
-        st.dataframe(scenario[["Capturadas", "%"]])
+        by_action = eff["by_action"]
+        st.markdown(
+            panel(
+                "Decisão do sistema × rótulo da simulação",
+                html_table(
+                    ["Ação", "Legítimas", "Fraudes"],
+                    [[ACTION_LABEL[a], fmt_int(r["legítima"]), fmt_int(r["fraude"])] for a, r in by_action.iterrows()],
+                ),
+            ),
+            unsafe_allow_html=True,
+        )
+        scenario = eff["by_scenario"]
+        st.markdown(
+            panel(
+                "Fraudes capturadas por cenário",
+                bar_rows(
+                    [
+                        (
+                            SCENARIO_LABEL.get(name, name.replace("_", " ")),
+                            f"{int(r['detected'])} de {int(r['total'])}",
+                            float(r["recall"]),
+                            fmt_pct(r["recall"]),
+                        )
+                        for name, r in scenario.iterrows()
+                    ]
+                ),
+            ),
+            unsafe_allow_html=True,
+        )
 
 
 # ----------------------------------------------------------------------
@@ -401,7 +441,7 @@ def _parse_lookup(text: str) -> int | None:
 
 def render():
     st.title("Central de Transações")
-    st.caption(
+    st.markdown(
         "Análise de risco das transações do banco sintético — executada ao vivo, sob demanda. "
         f"Atenção: {SIMULATION_NOTICE}."
     )
@@ -410,22 +450,26 @@ def render():
         st.error(
             "**Banco sintético não encontrado.** Gere-o com `python scripts/generate_mock_data.py` "
             "(é determinístico: seed fixa) e recarregue a página.",
-            icon="🗄️",
+            icon=":material/database_off:",
         )
         return
 
-    action_col, clear_col, _ = st.columns([1.3, 1, 3])
-    run = action_col.button("Executar análise de risco", type="primary", key="tx_run")
+    run = st.session_state.pop(RUN_FLAG, False)
+    result = st.session_state.get(RESULT_KEY)
+    if result is None and not run:
+        _render_empty_state()
+        return
+
+    action_col, clear_col, _ = st.columns([0.3, 0.2, 0.5])
+    action_col.button("Executar análise de risco", type="primary", key="tx_run", on_click=_request_run)
     clear_slot = clear_col.empty()  # preenchido depois: o botão só existe com resultado
 
-    result = st.session_state.get(RESULT_KEY)
     just_ran = False
     if run:
         result = _run_with_status()
         just_ran = result is not None
     if result is None:
-        _render_empty_state()
-        return
+        return  # a análise falhou: a explicação já está no status e o botão acima permite tentar de novo
     clear_slot.button("Limpar resultado", key="tx_clear", on_click=_clear_result)
     if not just_ran:
         _render_step_log(result)
@@ -455,6 +499,7 @@ def render():
     if transaction_id is not None:
         _render_investigation(result, transaction_id)
     else:
-        st.info("Selecione uma transação na tabela para abrir o painel de investigação.", icon="🔎")
+        st.info("Selecione uma transação na tabela para abrir o painel de investigação.", icon=":material/search:")
 
     _render_efficiency(result)
+

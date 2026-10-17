@@ -24,6 +24,7 @@ if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
 import risk_analysis as ra  # noqa: E402
+import ui  # noqa: E402
 
 APP = str(APP_DIR / "app.py")
 RUN_LABEL = "Executar análise de risco"
@@ -202,7 +203,12 @@ def test_efficiency_block_shows_the_simulation_notice_and_only_test_numbers(anal
     assert f"{m['tp']} de {eff['frauds']}" in cards
     assert f">{m['fp']}<" in cards  # falsos positivos
     assert f">{m['fn']}<" in cards  # fraudes perdidas
-    assert len(analyzed.get("plotly_chart")) == 1  # matriz de confusão (sem transação aberta, sem mapa)
+    assert len(analyzed.get("plotly_chart")) == 0  # sem transação aberta não há mapa; a matriz é HTML
+    matrix = next(x.value for x in analyzed.markdown if 'class="sx-matrix"' in x.value)
+    for value in (m["tn"], m["fp"], m["fn"], m["tp"]):
+        assert f'<div class="n">{ui.fmt_int(value)}</div>' in matrix
+    for label in ("Acertou (aprovou legítima)", "Falso positivo", "Fraude perdida", "Fraude capturada"):
+        assert label in matrix
 
 
 def test_clear_button_returns_to_the_empty_state(analyzed):
@@ -326,7 +332,7 @@ def test_lookup_by_id_opens_the_panel_with_everything_the_investigator_needs(ana
     cards = " ".join(m.value for m in analyzed.markdown if "metric-card" in m.value)
     assert "Risk Score final" in cards and "Score do ML" in cards and "Score das regras" in cards
     assert f"nível {row['level']}" in cards
-    assert len(analyzed.get("plotly_chart")) == 2  # mapa + matriz de confusão
+    assert len(analyzed.get("plotly_chart")) == 1  # o mapa (a matriz de confusão é HTML)
     assert analysis_calls["n"] == 1
 
 
@@ -340,11 +346,17 @@ def test_panel_lists_the_reasons_the_engine_gives(analyzed):
         assert reason in text
 
 
-def test_panel_escapes_the_currency_sign(analyzed):
-    """`R$ x ... R$ y` na mesma linha de markdown vira LaTeX se o $ não for escapado."""
-    analyzed.text_input(key="tx_lookup").set_value(str(_pick(analyzed, "alto"))).run()
-    value_line = next(line for m in analyzed.markdown for line in m.value.splitlines() if line.startswith("- **Valor:**"))
-    assert value_line.count("R\\$") == 2
+def test_panel_shows_the_amount_and_the_customer_average_in_the_fact_sheet(analyzed):
+    """A ficha é HTML (o bloco não passa pelo parser de fórmulas), então o `R$`
+    vai sem barra — escapar mostraria a barra na tela.
+    """
+    tx_id = _pick(analyzed, "alto")
+    analyzed.text_input(key="tx_lookup").set_value(str(tx_id)).run()
+    row = _frame(analyzed).set_index("transaction_id").loc[tx_id]
+    sheet = next(m.value for m in analyzed.markdown if "Ficha da transação" in m.value)
+    assert ui.fmt_brl(row["amount"]) in sheet
+    assert f"média habitual do cliente: {ui.fmt_brl(row['avg_amount_baseline'])}" in sheet
+    assert chr(92) + "$" not in sheet
 
 
 def test_unknown_or_invalid_id_warns_instead_of_breaking(analyzed):
@@ -422,7 +434,7 @@ def test_typed_id_wins_over_the_selected_row(monkeypatch, analyzed):
 
 
 def test_ptbr_formatting_helpers():
-    from views import transactions as view
+    import ui as view
 
     assert view.fmt_int(6912) == "6.912"
     assert view.fmt_pct(0.0371) == "3,7%"
