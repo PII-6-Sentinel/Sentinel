@@ -262,7 +262,8 @@ veredito — só o formulário — e **o resultado só aparece depois do clique 
    horário precisa ser **posterior à última transação do cliente**; senão a
    tela avisa e o botão fica desabilitado.
 2. **Cenários de demonstração:** compra normal, viagem impossível, valor
-   atípico (~10x a média), horário atípico, dispositivo novo e cidade nova.
+   atípico (~10x a média), horário atípico, dispositivo novo, cidade nova e
+   combinação de sinais (dispositivo novo + horário atípico + valor atípico).
    Os botões **só preenchem o formulário**, com valores calculados do
    histórico real do cliente escolhido (cidade natal, média, janela
    habitual, última compra...). Nenhum traz resultado embutido: o veredito
@@ -527,7 +528,7 @@ do time com validação estatística, o projeto segue algumas regras fixas
 pytest
 ```
 
-1.207 testes (a maioria parametrizações da escala de exibição), nenhum depende de dados baixados/gerados manualmente:
+1.213 testes (a maioria parametrizações da escala de exibição), nenhum depende de dados baixados/gerados manualmente:
 
 - **Camada de avaliação (Kaggle)**: separação entre escore e decisão,
   AUC-PR, thresholds inválidos, validação cruzada (5 folds, threshold
