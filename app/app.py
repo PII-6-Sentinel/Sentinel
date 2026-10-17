@@ -29,12 +29,13 @@ for path in (PROJECT_ROOT, APP_DIR):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from theme import inject_css  # noqa: E402
+from theme import ASSETS_DIR, inject_css  # noqa: E402
+from ui import brand_html  # noqa: E402
 from views import overview, scientific, simulator, transactions  # noqa: E402
 
 st.set_page_config(
     page_title="Sentinel — Análise de Risco Transacional",
-    page_icon="🛡️",
+    page_icon=str(ASSETS_DIR / "sentinel-icon.svg"),
     layout="wide",
 )
 inject_css()
@@ -48,6 +49,8 @@ PRODUCT_PAGES = {
 PRODUCT, SCIENTIFIC = "product", "scientific"
 st.session_state.setdefault("section", PRODUCT)
 
+SCIENTIFIC_ENTRY = "🔬 Ver Metodologia Científica (Kaggle) →"
+
 
 def _go(section: str) -> None:
     st.session_state["section"] = section
@@ -56,23 +59,18 @@ def _go(section: str) -> None:
 section = st.session_state["section"]
 
 with st.sidebar:
-    st.markdown("## 🛡️ Sentinel")
-    st.caption("Análise de risco transacional")
+    st.markdown(brand_html(), unsafe_allow_html=True)
 
     if section == PRODUCT:
         page_name = st.radio(
             "Navegação", list(PRODUCT_PAGES.keys()), key="nav_product", label_visibility="collapsed"
         )
-        st.markdown("---")
-        st.button(
-            "🔬 Ver Metodologia Científica (Kaggle) →",
-            on_click=_go,
-            args=(SCIENTIFIC,),
-            use_container_width=True,
-        )
+        # a seção científica fica atrás de um único botão discreto, na base
+        with st.container(key="sidebar-bottom"):
+            st.button(SCIENTIFIC_ENTRY, on_click=_go, args=(SCIENTIFIC,))
+            st.markdown('<div class="sx-foot">Projeto Integrador — TTI 304</div>', unsafe_allow_html=True)
     else:
-        st.button("← Voltar ao produto", on_click=_go, args=(PRODUCT,), use_container_width=True)
-        st.markdown("---")
+        st.button("← Voltar ao produto", on_click=_go, args=(PRODUCT,))
         st.caption("🔬 Metodologia Científica (Kaggle)")
         page_name = st.radio(
             "Navegação científica",
@@ -80,12 +78,11 @@ with st.sidebar:
             key="nav_scientific",
             label_visibility="collapsed",
         )
-        st.caption(
-            "Dataset: [Credit Card Fraud Detection](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud) (Kaggle/ULB)"
-        )
-
-    st.markdown("---")
-    st.caption("Projeto Integrador — TTI 304")
+        with st.container(key="sidebar-bottom"):
+            st.caption(
+                "Dataset: [Credit Card Fraud Detection](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud) (Kaggle/ULB)"
+            )
+            st.markdown('<div class="sx-foot">Projeto Integrador — TTI 304</div>', unsafe_allow_html=True)
 
 if section == PRODUCT:
     PRODUCT_PAGES[page_name].render()
