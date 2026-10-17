@@ -25,9 +25,12 @@ Sentinel/
 │   ├── theme.py                # paleta de cores e CSS
 │   ├── pipeline.py             # cache de dados/modelos do Kaggle (st.cache_data/cache_resource)
 │   ├── risk_analysis.py        # camada fina sobre src/risk/ para a Central (sem Streamlit, sem cache)
+│   ├── simulator.py            # camada fina do Simulador: contexto do cliente, cenários, raciocínio (sem Streamlit)
+│   ├── ui.py                   # formatação pt-BR, cartões, mapa e estilo de tabela compartilhados
 │   └── views/                  # uma página por módulo
 │       ├── overview.py         # PRODUTO: Visão Geral (proposta do Sentinel)
 │       ├── transactions.py     # PRODUTO: Central de Transações (análise de risco ao vivo)
+│       ├── simulator.py        # PRODUTO: Simulador (descreva uma transação, veja a análise)
 │       └── scientific/         # 🔬 Metodologia Científica (Kaggle) — atrás de 1 botão
 │           ├── eda.py              # Análise Exploratória
 │           ├── models_page.py      # Comparação de Modelos (+ validação cruzada)
@@ -206,6 +209,7 @@ dataset do Kaggle):
 |---|---|
 | **Visão Geral** | A proposta do Sentinel, os sinais que considera, o estado do projeto e (recolhido) o planejamento SWOT/GUT |
 | **Central de Transações** | A tela principal do produto: abre vazia e, ao clicar em "Executar análise de risco", processa o banco sintético ao vivo (ver abaixo) |
+| **Simulador** | Descreva uma transação de um cliente e veja o Sentinel analisá-la ao vivo, passo a passo (ver abaixo) |
 
 #### Central de Transações
 
@@ -244,6 +248,49 @@ resultado a todas as transações; por isso a tabela mostra a coluna
 lógica vive em `app/risk_analysis.py` e é testada contra
 `evaluate_risk_engine` e `RiskEngine.assess_frame` (mesmos pesos, faixas e
 decisões); a página só orquestra e exibe.
+
+#### Simulador
+
+Também precisa do banco sintético. Descreve **uma transação nova** de um
+cliente existente e mostra a análise de risco na hora. A página abre sem
+veredito — só o formulário — e **o resultado só aparece depois do clique em
+"Analisar transação"**:
+
+1. **Formulário:** cliente (nome e cidade natal), valor, cidade da compra
+   (as de `src/synthetic/geo_reference.py`), data e hora, e dispositivo (os
+   conhecidos do cliente, mais "Novo dispositivo, não reconhecido"). O
+   horário precisa ser **posterior à última transação do cliente**; senão a
+   tela avisa e o botão fica desabilitado.
+2. **Cenários de demonstração:** compra normal, viagem impossível, valor
+   atípico (~10x a média), horário atípico, dispositivo novo e cidade nova.
+   Os botões **só preenchem o formulário**, com valores calculados do
+   histórico real do cliente escolhido (cidade natal, média, janela
+   habitual, última compra...). Nenhum traz resultado embutido: o veredito
+   vem sempre do motor, ao clicar em Analisar.
+3. **Raciocínio ao vivo** (`st.status`): histórico recuperado (nº de
+   transações, valor médio, cidades conhecidas), distância da residência,
+   velocidade implícita desde a última compra (km/h e minutos), horário
+   contra a janela habitual, valor contra a média, dispositivo e cidade
+   reconhecidos ou não, score do ML, score das regras e a combinação no Risk
+   Score — todos calculados na hora, nenhum texto fixo. Se não houver motor
+   treinado na sessão ele é treinado como uma das etapas; se a Central de
+   Transações já o treinou, é reaproveitado.
+4. **Veredito:** Risk Score num gauge com as faixas 30 e 70, nível, ação,
+   scores de ML e regras separados, motivos em português, mapa (residência,
+   compra e a linha entre elas) e o resumo do histórico do cliente.
+5. **Histórico da sessão:** tabela das transações analisadas, guardada só em
+   `st.session_state` — nada é gravado no banco.
+
+O veredito é exatamente o de `src/risk/new_transaction.py`
+(`compute_transaction_features` + `RiskEngine.assess`): a camada
+`app/simulator.py` só acrescenta o contexto do cliente, os cenários, a
+validação do horário e o texto do raciocínio, e os testes garantem que o
+resultado coincide com `score_new_transaction` para a mesma entrada.
+
+**Os cenários não garantem um nível.** Quem decide é o motor, e há casos em
+que uma anomalia fica abaixo do limiar de revisão (por exemplo, dispositivo
+novo isolado). Isso é um comportamento do motor atual, não da página — ver
+"Resultados dos cenários de demonstração" em `docs/RISK_ENGINE.md`.
 
 **🔬 Metodologia Científica (Kaggle)** — um único botão discreto no rodapé
 da barra lateral ("🔬 Ver Metodologia Científica (Kaggle) →") abre esta
@@ -403,8 +450,8 @@ fixa (`--seed`, default 42) — rodar de novo produz exatamente o mesmo
 banco; use `--force` para sobrescrever um banco já existente, ou
 `--n-customers` para gerar um volume diferente.
 
-O Risk Engine (seção 7) e a Central de Transações (seção 5) consomem este
-banco. O simulador de transação nova no app ainda é uma etapa futura.
+O Risk Engine (seção 7), a Central de Transações e o Simulador (seção 5)
+consomem este banco.
 
 ## 7. Risk Engine
 
@@ -480,7 +527,7 @@ do time com validação estatística, o projeto segue algumas regras fixas
 pytest
 ```
 
-1.139 testes (a maioria parametrizações da escala de exibição), nenhum depende de dados baixados/gerados manualmente:
+1.207 testes (a maioria parametrizações da escala de exibição), nenhum depende de dados baixados/gerados manualmente:
 
 - **Camada de avaliação (Kaggle)**: separação entre escore e decisão,
   AUC-PR, thresholds inválidos, validação cruzada (5 folds, threshold
@@ -509,6 +556,15 @@ pytest
   a tabela. Com `AppTest`: a página abre vazia e **não executa a análise** ao
   abrir, os resultados só existem depois do clique, e filtros/seleção não a
   reexecutam. Usam um SQLite temporário em arquivo, nunca o banco real.
+- **Simulador** (`tests/test_app_simulator.py`,
+  `tests/test_app_simulator_page.py`): os cenários são calculados do
+  histórico de cada um dos 130 clientes e só preenchem o formulário; cada
+  cenário aciona o sinal que promete (viagem impossível produz
+  `is_impossible_travel` para todos os clientes); o veredito coincide com
+  `score_new_transaction`; validação do horário; o raciocínio traz valores
+  reais; nada é gravado no banco. Com `AppTest`: a página abre sem veredito,
+  o resultado só existe depois do clique, o motor é treinado uma vez (ou
+  reaproveitado da Central) e o histórico da sessão acumula as análises.
 - **Domínio sintético** (`tests/test_synthetic_data.py`): volume de
   clientes/transações dentro do esperado, taxa de fraude na faixa (~3%),
   nenhuma `distance_from_home_km` negativa, que toda transação
@@ -531,6 +587,6 @@ pytest
 - [x] Risk Engine: regras + ML, score 0-100, nível, ação e motivos (`src/risk/`, `docs/RISK_ENGINE.md`).
 - [x] Feature de novidade de cidade (`new_city`) — ver `docs/RISK_ENGINE.md`, seção 6.
 - [x] Central de Transações: análise de risco ao vivo, tabela investigável, painel, eficiência no teste (`app/views/transactions.py`).
-- [ ] Simulador de transação nova no app (Etapa 10).
+- [x] Simulador ao vivo: formulário, cenários de demonstração, raciocínio passo a passo, veredito e histórico da sessão (`app/views/simulator.py`).
 - [ ] Ajustar hiperparâmetros e comparar com balanceamento via SMOTE (não só `class_weight`).
 - [ ] Notebook comparativo formalizando as métricas das três abordagens (hoje só na aplicação).

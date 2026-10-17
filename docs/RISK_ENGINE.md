@@ -334,6 +334,49 @@ do banco (exceto as que empatam no mesmo minuto com outra do mesmo
 cliente), as features — inclusive `new_city` e a cidade inferida — batem
 com `build_risk_table`.
 
+### Resultados dos cenários de demonstração (Simulador)
+
+O Simulador (`app/views/simulator.py`) tem seis cenários que só preenchem o
+formulário, com valores calculados do histórico do cliente escolhido; quem
+classifica é o motor. Rodando cada cenário para **todos os 130 clientes**
+com o motor atual (30% regras / 70% ML; faixas internas 73 e 81):
+
+| Cenário | O que preenche | Score interno (mín–máx) | Risk Score exibido | Resultado nos 130 clientes |
+|---|---|---|---|---|
+| Compra normal | cidade natal, valor médio, horário habitual, dispositivo conhecido | 0 | 0 | 130 baixo (aprovar) |
+| Viagem impossível | cidade mais distante da última compra, 20 min depois | 82–100 | 72–100 (mediana 93) | 130 alto (bloquear) |
+| Valor atípico | 10x o valor médio | 77 | 50 | 130 médio (revisar) |
+| Horário atípico | lado oposto da janela habitual (5,5 a 8 h fora) | 74 | 35 | 130 médio (revisar) |
+| Dispositivo novo | "Novo dispositivo, não reconhecido" | 71–73 | 29–30 | **130 baixo (aprovar)** |
+| Cidade nova | cidade nunca visitada, ~2.000 km da residência | 67–81 | 27–70 (mediana 55) | 128 médio, **2 baixo** |
+
+O que a equipe precisa saber antes da banca:
+
+- **Dispositivo novo, sozinho, é aprovado** em todos os clientes. As regras
+  somam 35 pontos (novo 20 + não confiável 15) e o ML dá ~89, o que resulta
+  em score interno 71–73 contra o limiar de revisão 73 ("revisar acima de
+  73"): fica de 0 a 2 pontos abaixo. O motivo aparece na lista ("Dispositivo
+  nunca usado antes… não confiável"), mas não muda a ação. Sinais de
+  dispositivo só levam a revisão combinados a outro sinal.
+- **Horário atípico é revisado por 1 ponto** (74 contra 73), em todos os
+  clientes. É frágil: uma calibração um pouco diferente dos limiares o
+  aprovaria.
+- **Cidade nova isolada fica no meio da faixa de revisão** (mediana 55 exibido,
+  score interno ~78, limiar de bloqueio 81), mas 2 clientes, cuja cidade
+  inédita mais próxima de 2.000 km ficou a ~500 km, ficam em 27 (aprovada).
+  É a mesma limitação da seção 8, item 2: uma primeira visita legítima e uma
+  fraude geográfica têm os mesmos sinais.
+- **Só a viagem impossível chega a "alto" (bloquear).** Valor, horário e
+  cidade nova, isolados, no máximo vão para revisão. Todos os 130 casos de
+  viagem impossível passam de 81 por pontuação própria (ML ~100 + regras 85),
+  e não só pelo piso de "médio".
+- Os resultados não dependem do conjunto do cliente: nos 39 clientes de
+  teste a distribuição é a mesma (a exceção é a cidade nova: 1 baixo, 38
+  médio).
+
+Esses números são o comportamento real do motor com dados sintéticos; não
+foram ajustados para que os cenários "dêem certo".
+
 ## 8. Limitações (para defender na banca)
 
 1. **Circularidade dos rótulos.** As fraudes foram geradas manipulando as
@@ -362,3 +405,7 @@ com `build_risk_table`.
 8. **`device_untrusted` é perfeito para `dispositivo_novo`** porque o
    gerador sempre cria esses dispositivos como não confiáveis — outro caso
    de circularidade.
+9. **Sinais isolados ficam rente aos limiares** (seção 7, cenários do
+   Simulador): dispositivo novo é aprovado por até 2 pontos e horário
+   atípico é revisado por 1. A decisão nesses casos depende de poucos
+   pontos em limiares calibrados com 40 fraudes (item 6).
