@@ -29,7 +29,7 @@ def _button(at: AppTest, label: str):
 def test_main_navigation_only_lists_operational_pages():
     at = _run()
     assert not at.exception
-    assert at.sidebar.radio(key="nav_product").options == ["Visão Geral", "Central de Transações"]
+    assert at.sidebar.radio(key="nav_product").options == ["Visão Geral", "Central de Transações", "Simulador"]
 
 
 def test_scientific_pages_are_not_in_the_main_navigation():
@@ -79,12 +79,25 @@ def test_transactions_page_is_the_central_not_a_placeholder(monkeypatch, synthet
     assert any("Nenhuma análise executada" in i.value for i in at.info)
 
 
-def test_overview_no_longer_lists_risk_engine_or_central_as_under_construction():
+def test_transactions_page_opens_without_the_simulator_state(monkeypatch, synthetic_db_file):
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(synthetic_db_file))
+    at = _run()
+    at.sidebar.radio(key="nav_product").set_value("Simulador").run()
+
+    assert not at.exception
+    assert [s.value for s in at.subheader if s.value == "Veredito do Sentinel"] == []
+    assert "Analisar transação" in [b.label for b in at.button]
+    assert any("Nenhuma transação analisada" in i.value for i in at.info)
+
+
+def test_overview_lists_every_product_component_as_ready():
     at = _run()
     status = at.dataframe[0].value
     state = dict(zip(status["Componente"], status["Situação"]))
     assert state["Risk Engine"] == "Pronto"
     assert state["Central de Transações"] == "Pronto"
+    assert state["Simulador ao vivo"] == "Pronto"
+    assert "Em construção" not in state.values()
 
 
 def test_product_section_does_not_show_the_scientific_intro():

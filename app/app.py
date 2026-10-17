@@ -30,7 +30,7 @@ for path in (PROJECT_ROOT, APP_DIR):
         sys.path.insert(0, str(path))
 
 from theme import inject_css  # noqa: E402
-from views import overview, scientific, transactions  # noqa: E402
+from views import overview, scientific, simulator, transactions  # noqa: E402
 
 st.set_page_config(
     page_title="Sentinel — Análise de Risco Transacional",
@@ -42,6 +42,7 @@ inject_css()
 PRODUCT_PAGES = {
     "Visão Geral": overview,
     "Central de Transações": transactions,
+    "Simulador": simulator,
 }
 
 PRODUCT, SCIENTIFIC = "product", "scientific"
