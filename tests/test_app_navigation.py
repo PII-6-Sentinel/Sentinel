@@ -65,12 +65,26 @@ def test_overview_does_not_need_the_kaggle_dataset(monkeypatch):
     assert not at.exception
 
 
-def test_transactions_page_is_a_clear_placeholder():
+def test_transactions_page_is_the_central_not_a_placeholder(monkeypatch, synthetic_db_file):
+    """A Central de Transações abre no estado vazio, pronta para executar a
+    análise — o detalhe do comportamento fica em tests/test_app_transactions.py.
+    """
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(synthetic_db_file))
     at = _run()
     at.sidebar.radio(key="nav_product").set_value("Central de Transações").run()
 
     assert not at.exception
-    assert any("Em construção" in w.value and "Risk Engine" in w.value for w in at.warning)
+    assert not any("Em construção" in w.value for w in at.warning)
+    assert "Executar análise de risco" in [b.label for b in at.button]
+    assert any("Nenhuma análise executada" in i.value for i in at.info)
+
+
+def test_overview_no_longer_lists_risk_engine_or_central_as_under_construction():
+    at = _run()
+    status = at.dataframe[0].value
+    state = dict(zip(status["Componente"], status["Situação"]))
+    assert state["Risk Engine"] == "Pronto"
+    assert state["Central de Transações"] == "Pronto"
 
 
 def test_product_section_does_not_show_the_scientific_intro():
