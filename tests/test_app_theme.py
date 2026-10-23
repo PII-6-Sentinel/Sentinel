@@ -83,7 +83,3 @@ def test_font_import_comes_first_and_has_a_fallback_stack(css):
     assert css.startswith("@import url(")  # @import só vale antes de qualquer regra
     assert "-apple-system" in theme.FONT_STACK and "sans-serif" in theme.FONT_STACK  # offline cai no sistema
 
-
-def test_legacy_names_still_resolve_for_the_scientific_section():
-    assert theme.ELECTRIC_BLUE == theme.ACCENT and theme.CORAL == theme.RISK_HIGH and theme.MUTED == theme.TEXT_SECONDARY
-    assert set(theme.CLASS_COLORS) == {"Legítima", "Fraude"}

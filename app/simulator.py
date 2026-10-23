@@ -40,10 +40,17 @@ from src.risk.engine import RiskEngine, RiskResult, combine_scores
 from src.risk.new_transaction import compute_transaction_features
 from src.synthetic.generator import MAX_PLAUSIBLE_SPEED_KMH
 from src.synthetic.geo_reference import CITIES, CityRef, distance_km
-from src.synthetic.models import Customer, Device, Merchant, Transaction
+from src.synthetic.models import Channel, Customer, Device, Merchant, PaymentMethod, Transaction
 
 # Valor da opção "Novo dispositivo, não reconhecido" no seletor de dispositivo.
 NEW_DEVICE = -1
+
+# Canal e forma de pagamento (Etapa 12): (canal, forma de pagamento) -> rótulo.
+CHANNEL_OPTIONS: dict[tuple[str, str | None], str] = {
+    (Channel.PRESENCIAL.value, PaymentMethod.SENHA.value): "Presencial · senha",
+    (Channel.PRESENCIAL.value, PaymentMethod.APROXIMACAO.value): "Presencial · aproximação",
+    (Channel.ONLINE.value, None): "Online",
+}
 
 # Velocidade (km/h) usada para escolher horários plausíveis nos cenários que
 # NÃO são de viagem impossível: bem abaixo dos 900 km/h do limiar.
@@ -223,6 +230,8 @@ class FormValues:
     amount: float
     timestamp: datetime
     device_id: int
+    channel: str = Channel.PRESENCIAL.value
+    payment_method: str | None = PaymentMethod.SENHA.value
 
 
 def validate_timestamp(ctx: CustomerContext, timestamp: datetime) -> str | None:
@@ -444,8 +453,10 @@ def simulate(
         timestamp=form.timestamp,
         device_id=device_id,
         city=city.city,
+        channel=form.channel,
+        payment_method=form.payment_method,
     )
-    finish(label, "distância, valor, horário, dispositivo, cidade e velocidade implícita", t0)
+    finish(label, "distância, valor, horário, dispositivo, cidade, canal e velocidade implícita", t0)
 
     # leituras dos valores intermediários reais
     km_home = features["distance_from_home_km"]
@@ -509,6 +520,15 @@ def simulate(
         city_text = f"{city.city} NUNCA visitada — primeira compra do cliente nesta cidade"
     finish("Cidade", city_text, None)
 
+    channel_label = CHANNEL_OPTIONS[(form.channel, form.payment_method if form.channel != Channel.ONLINE.value else None)]
+    if ctx.n_transactions == 0:
+        channel_text = f"{channel_label}: cliente sem histórico para comparar"
+    else:
+        share = (1.0 - features["channel_rarity"]) * 100
+        channel_text = f"{channel_label} — {_fmt_int(share)}% das compras anteriores do cliente foram por este canal"
+    finish("Canal e forma de pagamento", channel_text, None)
+    facts["channel_rarity"] = features["channel_rarity"]
+
     # 3. ML e regras (cada uma isolada, para mostrar os dois scores e o tempo)
     label = "Aplicando o modelo de ML"
     t0 = begin(label)
@@ -560,6 +580,7 @@ def history_row(result: SimulationResult) -> dict:
         "Cliente": result.context.name,
         "Valor": result.form.amount,
         "Cidade": result.city.city,
+        "Canal": CHANNEL_OPTIONS[(result.form.channel, result.form.payment_method if result.form.channel != Channel.ONLINE.value else None)],
         "Data/hora": result.form.timestamp,
         "Risk Score": a.risk_score,
         "Nível": a.level,

@@ -6,9 +6,7 @@ Aqui ficam os TOKENS de design (a fonte da verdade, vinda do protótipo
 destas constantes, então trocar um token aqui troca em todo lugar.
 
 Os tokens também servem aos gráficos Plotly (`apply_plotly_theme`) e aos
-componentes HTML de `app/ui.py`. Os nomes antigos (NAVY, ELECTRIC_BLUE,
-CORAL, ...) continuam existindo como apelidos dos tokens novos, porque a
-seção científica (Kaggle) ainda os importa.
+componentes HTML de `app/ui.py`.
 
 `.streamlit/config.toml` repete as cores principais para o tema escuro valer
 mesmo com o sistema operacional em modo claro e para o que o CSS não alcança
@@ -65,20 +63,6 @@ RADIUS_PILL = 999  # botões, chips e selos
 
 SPACE_PAGE_MARGIN = 64  # margem lateral da página
 SPACE_SECTION = 80  # distância entre seções
-
-# ----------------------------------------------------------------------
-# apelidos dos nomes antigos (a seção científica ainda os importa)
-# ----------------------------------------------------------------------
-NAVY = BG
-NAVY_LIGHT = SURFACE
-NAVY_LIGHTER = SURFACE_RAISED
-ELECTRIC_BLUE = ACCENT
-CORAL = RISK_HIGH
-AMBER = RISK_MEDIUM
-MUTED = TEXT_SECONDARY
-
-# "legítima" em azul vs "fraude" em coral em todos os gráficos do app
-CLASS_COLORS = {"Legítima": ACCENT, "Fraude": RISK_HIGH}
 
 # ----------------------------------------------------------------------
 # Plotly: um único template escuro
