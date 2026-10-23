@@ -106,7 +106,15 @@ def test_scenarios_are_exactly_the_seven_requested_ones():
 
 
 def test_scenario_forms_carry_inputs_only_never_a_result():
-    assert set(sim.FormValues.__dataclass_fields__) == {"customer_id", "city", "amount", "timestamp", "device_id"}
+    assert set(sim.FormValues.__dataclass_fields__) == {
+        "customer_id",
+        "city",
+        "amount",
+        "timestamp",
+        "device_id",
+        "channel",
+        "payment_method",
+    }
 
 
 def test_every_scenario_is_valid_for_every_customer(db, customer_ids):
@@ -289,6 +297,8 @@ def test_verdict_equals_score_new_transaction_for_the_same_input(db, risk_engine
                 timestamp=form.timestamp,
                 device_id=None if form.device_id == sim.NEW_DEVICE else form.device_id,
                 city=form.city,
+                channel=form.channel,
+                payment_method=form.payment_method,
             )
         assert simulated == reference  # RiskResult inteiro: scores, nível, ação, motivos
 
@@ -355,6 +365,7 @@ def test_reasoning_steps_are_in_order_and_announced_to_the_callback(db, risk_eng
         "Valor em relação à média",
         "Dispositivo",
         "Cidade",
+        "Canal e forma de pagamento",
         "Aplicando o modelo de ML",
         "Aplicando as regras",
         "Combinando no Risk Score",
@@ -421,3 +432,34 @@ def test_history_row_has_the_session_table_columns(db, risk_engine, customer_ids
     assert {"Cliente", "Valor", "Cidade", "Risk Score", "Nível", "Ação"} <= set(row)
     assert row["Cliente"] == result.context.name and row["Risk Score"] == result.assessment.risk_score
     assert isinstance(row["Data/hora"], datetime)
+
+
+def test_channel_reaches_the_features_and_the_reasoning(db, risk_engine, customer_ids):
+    ctx = _ctx(db, customer_ids[1])
+    normal = sim.build_scenarios(ctx)[sim.SCENARIO_NORMAL]
+    online = sim.FormValues(**{**normal.__dict__, "channel": "online", "payment_method": None})
+    result = _simulate(db, risk_engine, online)
+    assert result.features["is_online"] is True
+    step = next(s for s in result.steps if s.label == "Canal e forma de pagamento")
+    assert step.detail.startswith("Online")
+
+
+def test_scenarios_use_a_coherent_channel(db, customer_ids):
+    """Cada cenário usa o canal habitual do cliente (só muda o que promete);
+    com dispositivo novo, online, como no gerador do banco. Aproximação
+    nunca passa do limite sem senha.
+    """
+    from src.synthetic.generator import CONTACTLESS_LIMIT_BRL
+
+    for cid in customer_ids[::7]:
+        ctx = _ctx(db, cid)
+        habitual = sim.habitual_channel(ctx)
+        for key, form in sim.build_scenarios(ctx).items():
+            if form is None:
+                continue
+            if form.device_id == sim.NEW_DEVICE:
+                assert (form.channel, form.payment_method) == ("online", None), key
+            elif form.payment_method == "aproximacao":
+                assert form.amount <= CONTACTLESS_LIMIT_BRL, key
+            elif habitual[1] != "aproximacao" or form.amount <= CONTACTLESS_LIMIT_BRL:
+                assert (form.channel, form.payment_method) == habitual, key

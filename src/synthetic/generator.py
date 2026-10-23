@@ -691,24 +691,30 @@ def assign_channels(dataset: GeneratedDataset, seed: int = DEFAULT_SEED) -> None
         customer.contactless_share = round(rng.uniform(*CONTACTLESS_SHARE_RANGE), 3)
 
     for tx in dataset.transactions:
-        customer = tx.customer
-        if tx.is_fraud and tx.fraud_scenario == FraudScenario.DISPOSITIVO_NOVO.value:
-            online, contactless = True, False
-        elif tx.is_fraud and rng.random() < FRAUD_PIN_KNOWN_PROB:
-            online, contactless = False, False
-        elif tx.is_fraud:
-            online = tx.amount > CONTACTLESS_LIMIT_BRL or rng.random() < FRAUD_ONLINE_PROB
-            contactless = not online
-        else:
-            online = rng.random() < customer.online_share
-            contactless = (
-                not online and tx.amount <= CONTACTLESS_LIMIT_BRL and rng.random() < customer.contactless_share
-            )
-        if online:
-            tx.channel, tx.payment_method = Channel.ONLINE.value, None
-        else:
-            method = PaymentMethod.APROXIMACAO if contactless else PaymentMethod.SENHA
-            tx.channel, tx.payment_method = Channel.PRESENCIAL.value, method.value
+        tx.channel, tx.payment_method = pick_channel(rng, tx.customer, tx.amount, tx.fraud_scenario if tx.is_fraud else None)
+
+
+def pick_channel(
+    rng: random.Random, customer: Customer, amount: float, fraud_scenario: str | None
+) -> tuple[str, str | None]:
+    """(canal, forma de pagamento) de UMA transação: `fraud_scenario` None
+    = compra normal, que segue o hábito do cliente; senão, a lógica do golpe.
+    Usada pelo gerador do banco e pelo gerador ao vivo (`live_generator`).
+    """
+    if fraud_scenario == FraudScenario.DISPOSITIVO_NOVO.value:
+        online, contactless = True, False
+    elif fraud_scenario is not None and rng.random() < FRAUD_PIN_KNOWN_PROB:
+        online, contactless = False, False
+    elif fraud_scenario is not None:
+        online = amount > CONTACTLESS_LIMIT_BRL or rng.random() < FRAUD_ONLINE_PROB
+        contactless = not online
+    else:
+        online = rng.random() < customer.online_share
+        contactless = not online and amount <= CONTACTLESS_LIMIT_BRL and rng.random() < customer.contactless_share
+    if online:
+        return Channel.ONLINE.value, None
+    method = PaymentMethod.APROXIMACAO if contactless else PaymentMethod.SENHA
+    return Channel.PRESENCIAL.value, method.value
 
 
 # ---------------------------------------------------------------------------

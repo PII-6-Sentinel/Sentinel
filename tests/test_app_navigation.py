@@ -1,20 +1,22 @@
 """Testes da arquitetura de navegação do app (app/app.py).
 
-Usam o `AppTest` do Streamlit — executam o script sem navegador. Só a
-seção do produto é exercitada sem dados: as páginas científicas carregam o
-dataset do Kaggle, então os testes que entram nelas só rodam se o CSV
-existir na máquina (nunca é exigido para rodar a suíte).
+Usam o `AppTest` do Streamlit — executam o script sem navegador. O app só
+tem o produto: a seção científica (Kaggle) saiu do app na Etapa 13 e vive
+no repositório (`src/`, `notebooks/`).
 """
 
+import sys
 from pathlib import Path
 
-import pytest
 from streamlit.testing.v1 import AppTest
 
-APP = str(Path(__file__).resolve().parent.parent / "app" / "app.py")
-KAGGLE_CSV = Path(__file__).resolve().parent.parent / "data" / "raw" / "creditcard.csv"
+APP_DIR = Path(__file__).resolve().parent.parent / "app"
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
 
-SCIENTIFIC_ENTRY = "🔬 Ver Metodologia Científica (Kaggle) →"
+import risk_analysis as ra  # noqa: E402
+
+APP = str(APP_DIR / "app.py")
 SCIENTIFIC_PAGES = ["Análise Exploratória", "Comparação de Modelos", "Análise de Threshold", "Demo (dataset Kaggle)"]
 
 
@@ -37,17 +39,17 @@ def test_main_navigation_only_lists_operational_pages():
     ]
 
 
-def test_scientific_pages_are_not_in_the_main_navigation():
+def test_scientific_pages_are_not_in_the_app():
     at = _run()
     options = at.sidebar.radio(key="nav_product").options
     for scientific_page in SCIENTIFIC_PAGES:
         assert scientific_page not in options
 
 
-def test_single_discreet_entry_point_to_the_scientific_section():
+def test_no_entry_point_to_a_scientific_section():
     at = _run()
-    entries = [b for b in at.button if "Metodologia Científica" in b.label]
-    assert [b.label for b in entries] == [SCIENTIFIC_ENTRY]
+    assert not [b for b in at.button if "Metodologia Científica" in b.label]
+    assert "section" not in at.session_state
 
 
 def test_overview_states_the_product_proposal_and_where_the_science_lives():
@@ -57,7 +59,7 @@ def test_overview_states_the_product_proposal_and_where_the_science_lives():
     assert "Sentinel é uma plataforma de análise de risco transacional" in text
     assert "instituições financeiras" in text
     assert "não decide sozinho" in text
-    assert "Metodologia Científica (Kaggle)" in text
+    assert "fora do app" in text  # a validação científica fica no repositório
 
 
 def test_overview_does_not_need_the_kaggle_dataset(monkeypatch):
@@ -122,26 +124,23 @@ def test_overview_lists_every_product_component_as_ready():
     assert "Em construção" not in state.values()
 
 
-def test_product_section_does_not_show_the_scientific_intro():
-    at = _run()
-    assert not any("validação científica dos modelos" in i.value for i in at.info)
 
+def test_outdated_database_shows_how_to_fix_it(monkeypatch, tmp_path):
+    """Banco de antes da Etapa 12 (sem as colunas de canal): as páginas que
+    usam o banco explicam como regenerar, em vez de quebrar com erro de SQL.
+    """
+    import sqlite3
 
-@pytest.mark.skipif(not KAGGLE_CSV.exists(), reason="dataset do Kaggle não baixado")
-def test_scientific_section_opens_with_role_header_and_can_go_back():
-    at = _run()
-    _button(at, SCIENTIFIC_ENTRY).click().run()
+    path = tmp_path / "antigo.db"
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT)")
+        conn.execute("CREATE TABLE transactions (id INTEGER PRIMARY KEY, amount REAL)")
+    assert ra.database_problem(path) == ra.OUTDATED_DB_MESSAGE
+    assert ra.database_problem(tmp_path / "nao_existe.db") == ra.MISSING_DB_MESSAGE
 
-    assert not at.exception
-    assert at.session_state["section"] == "scientific"
-    assert any(
-        "Esta seção documenta a validação científica dos modelos usando o dataset "
-        "público Kaggle. Ela fundamenta metodologicamente o sistema, mas não é o "
-        "produto em si." in i.value
-        for i in at.info
-    )
-    assert at.sidebar.radio(key="nav_scientific").options == SCIENTIFIC_PAGES
-
-    _button(at, "← Voltar ao produto").click().run()
-    assert at.session_state["section"] == "product"
-    assert not at.exception
+    monkeypatch.setenv(ra.DB_ENV_VAR, str(path))
+    for page in ("Central de Transações", "Simulador", "Monitor ao Vivo"):
+        at = _run()
+        at.sidebar.radio(key="nav_product").set_value(page).run()
+        assert not at.exception, page
+        assert any("desatualizado" in e.value and "--force" in e.value for e in at.error), page

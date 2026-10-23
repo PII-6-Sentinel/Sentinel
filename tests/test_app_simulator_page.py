@@ -52,6 +52,8 @@ def _form(at: AppTest) -> sim.FormValues:
         amount=at.number_input(key="sim_amount").value,
         timestamp=datetime.combine(at.date_input(key="sim_date").value, at.time_input(key="sim_time").value),
         device_id=at.selectbox(key="sim_device").value,
+        channel=at.selectbox(key="sim_channel").value[0],
+        payment_method=at.selectbox(key="sim_channel").value[1],
     )
 
 
@@ -108,7 +110,12 @@ def test_page_is_in_the_main_navigation_next_to_the_other_pages(page):
 
 
 def test_page_opens_with_the_form_and_no_verdict(page, analysis_calls):
-    assert [s.label for s in page.selectbox] == ["Cliente (nome — cidade natal)", "Cidade da compra", "Dispositivo"]
+    assert [s.label for s in page.selectbox] == [
+        "Cliente (nome — cidade natal)",
+        "Cidade da compra",
+        "Dispositivo",
+        "Canal e pagamento",
+    ]
     assert len(page.number_input) == 1 and len(page.date_input) == 1 and len(page.time_input) == 1
     assert RUN in [b.label for b in page.button]
     assert "Nenhuma transação analisada" in _texts(page)

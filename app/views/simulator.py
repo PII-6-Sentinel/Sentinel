@@ -21,8 +21,9 @@ from datetime import date, datetime
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from risk_analysis import DatabaseNotFound, resolve_db_path, run_analysis
+from risk_analysis import DatabaseNotFound, database_problem, resolve_db_path, run_analysis
 from simulator import (
+    CHANNEL_OPTIONS,
     CITY_NAMES,
     NEW_DEVICE,
     SCENARIO_HELP,
@@ -69,13 +70,14 @@ HISTORY_KEY = "sim_history"
 FORM_CUSTOMER_KEY = "sim_form_customer"  # cliente para o qual o formulário foi preenchido
 ACTIVE_SCENARIO_KEY = "sim_active_scenario"  # último cenário que preencheu o formulário (destaque do chip)
 
-K_CUSTOMER, K_AMOUNT, K_CITY, K_DATE, K_TIME, K_DEVICE = (
+K_CUSTOMER, K_AMOUNT, K_CITY, K_DATE, K_TIME, K_DEVICE, K_CHANNEL = (
     "sim_customer",
     "sim_amount",
     "sim_city",
     "sim_date",
     "sim_time",
     "sim_device",
+    "sim_channel",
 )
 RUN_LABEL = "Analisar transação"
 SIMULATION_NOTICE = "dados simulados; valida a lógica do sistema, não o desempenho em fraude real"
@@ -100,6 +102,7 @@ def _apply_values(form: FormValues, set_customer: bool = True, scenario: str | N
     st.session_state[K_DATE] = form.timestamp.date()
     st.session_state[K_TIME] = form.timestamp.time().replace(second=0, microsecond=0)
     st.session_state[K_DEVICE] = form.device_id
+    st.session_state[K_CHANNEL] = (form.channel, form.payment_method)
     st.session_state[FORM_CUSTOMER_KEY] = form.customer_id
     st.session_state[ACTIVE_SCENARIO_KEY] = scenario
     st.session_state.pop(VERDICT_KEY, None)
@@ -326,7 +329,8 @@ def _render_verdict(entry: dict, just_ran: bool) -> None:
     st.subheader("Veredito do Sentinel")
     st.markdown(
         f"{esc(ctx.name)} · {md_brl(form.amount)} em {esc(result.city.city)} · {form.timestamp:%d/%m/%Y %H:%M} · "
-        f"dispositivo: {'novo, não reconhecido' if form.device_id == NEW_DEVICE else f'#{form.device_id}'}"
+        f"dispositivo: {'novo, não reconhecido' if form.device_id == NEW_DEVICE else f'#{form.device_id}'} · "
+        f"{CHANNEL_OPTIONS[(form.channel, form.payment_method)].lower()}"
     )
     if not just_ran:  # logo após o clique, o status ao vivo já está na tela
         _render_log(entry)
@@ -452,7 +456,9 @@ def _render(session: Session) -> None:
                 )
         _active_chip_style()
 
-        f1, f2, f3, f4, f5 = st.columns([1, 1.2, 1, 1, 1.8])
+        # duas linhas de três: seis campos numa linha cortavam o texto dos seletores
+        f1, f2, f3 = st.columns([1, 1.2, 1])
+        f4, f5, f6 = st.columns([1, 1.8, 1.4])
         amount = f1.number_input("Valor (R$)", min_value=0.01, step=1.0, format="%.2f", key=K_AMOUNT)
         city = f2.selectbox("Cidade da compra", CITY_NAMES, key=K_CITY)
         day = f3.date_input(
@@ -461,8 +467,13 @@ def _render(session: Session) -> None:
         clock = f4.time_input("Horário", step=60, key=K_TIME)
         device_ids = [d.id for d in ctx.devices] + [NEW_DEVICE]
         device = f5.selectbox("Dispositivo", device_ids, format_func=_device_label(ctx), key=K_DEVICE)
+        channel, payment = f6.selectbox(
+            "Canal e pagamento", list(CHANNEL_OPTIONS), format_func=CHANNEL_OPTIONS.get, key=K_CHANNEL
+        )
 
-        form = FormValues(int(customer_id), city, float(amount), datetime.combine(day, clock), int(device))
+        form = FormValues(
+            int(customer_id), city, float(amount), datetime.combine(day, clock), int(device), channel, payment
+        )
         error = validate_timestamp(ctx, form.timestamp)
         if error:
             st.warning(error, icon=":material/schedule:")
@@ -499,12 +510,9 @@ def render():
         f"Atenção: {SIMULATION_NOTICE}."
     )
     db_path = resolve_db_path()
-    if not db_path.exists():
-        st.error(
-            "**Banco sintético não encontrado.** Gere-o com `python scripts/generate_mock_data.py` "
-            "(é determinístico: seed fixa) e recarregue a página.",
-            icon=":material/database_off:",
-        )
+    problem = database_problem(db_path)
+    if problem:
+        st.error(problem, icon=":material/database_off:")
         return
 
     sa_engine = create_engine(f"sqlite:///{db_path}")

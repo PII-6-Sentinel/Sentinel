@@ -4,27 +4,24 @@ numpy>=1.26
 
 # --- Machine Learning e avaliação estatística ---
 scikit-learn>=1.4
-imbalanced-learn>=0.12   # SMOTE, undersampling e afins (dataset desbalanceado)
-scipy>=1.11
-
-# --- Visualização ---
-matplotlib>=3.8
-seaborn>=0.13
-plotly>=5.20
+imbalanced-learn>=0.12   # SMOTE, undersampling e afins (src/preprocessing.py, via Kaggle)
 
 # --- Aplicação interativa (apresentação) ---
-streamlit>=1.39
-
-# --- Notebooks ---
-jupyter>=1.0
-notebook>=7.0
-
-# --- Download do dataset (opcional, via API do Kaggle) ---
-kaggle>=1.6
+streamlit>=1.50   # width="stretch" nos botões (substitui o use_container_width, depreciado)
+plotly>=5.20      # gráficos e mapas do app
 
 # --- Domínio sintético (via de simulação operacional antifraude) ---
 sqlalchemy>=2.0   # ORM + SQLite, persistência do domínio sintético
 geopy>=2.4        # distância geodésica entre coordenadas, sem chamadas de rede
+
+# --- Notebooks (validação científica com o dataset do Kaggle) ---
+jupyter>=1.0
+notebook>=7.0
+matplotlib>=3.8
+seaborn>=0.13
+
+# --- Download do dataset (opcional, via API do Kaggle) ---
+kaggle>=1.6
 
 # --- Testes ---
 pytest>=8.0

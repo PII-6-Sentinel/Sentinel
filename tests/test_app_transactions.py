@@ -76,10 +76,23 @@ def page(monkeypatch, synthetic_db_file, analysis_calls) -> AppTest:
 
 @pytest.fixture
 def analyzed(page) -> AppTest:
-    """A mesma página, depois do clique em "Executar análise de risco"."""
+    """A mesma página, depois do clique em "Executar análise de risco", com o
+    filtro "Conjunto" limpo (todas as linhas) — o padrão "teste" tem teste próprio.
+    """
     _button(page, RUN_LABEL).click().run()
     assert not page.exception
+    page.multiselect(key="tx_f_split").set_value([]).run()
     return page
+
+
+def test_conjunto_filter_opens_on_the_test_customers(page):
+    """Padrão = teste: a tabela abre só com clientes que o modelo nunca viu."""
+    _button(page, RUN_LABEL).click().run()
+    assert page.multiselect(key="tx_f_split").value == ["teste"]
+    frame = page.session_state["risk_analysis"].frame
+    table = page.dataframe[0].value
+    assert len(table) == (frame["conjunto"] == "teste").sum() < len(frame)
+    assert set(table["Conjunto"]) == {"teste"}
 
 
 def _table(at: AppTest):
@@ -177,7 +190,7 @@ def test_summary_cards_match_the_analysis(analyzed):
 def test_table_is_sorted_by_risk_score_and_has_the_requested_columns(analyzed):
     table = _table(analyzed)
     assert table.columns.tolist() == [
-        "ID", "Cliente", "Valor", "Cidade", "Data/hora", "Risk Score", "Nível", "Ação", "Conjunto",
+        "ID", "Cliente", "Valor", "Cidade", "Canal", "Data/hora", "Risk Score", "Nível", "Ação", "Conjunto",
     ]
     assert len(table) == len(analyzed.session_state["risk_analysis"].frame)
     assert table["Risk Score"].is_monotonic_decreasing
@@ -444,3 +457,9 @@ def test_ptbr_formatting_helpers():
     assert view.fmt_km(2317.4) == "2.317 km"
     assert view.fmt_seconds(0.0642) == "64 ms"
     assert view.fmt_seconds(1.5) == "1,50 s"
+
+
+def test_table_and_record_show_the_channel(analyzed):
+    table = _table(analyzed)
+    assert set(table["Canal"]) <= {"Online", "Presencial · senha", "Presencial · aproximação"}
+    assert len(set(table["Canal"])) == 3

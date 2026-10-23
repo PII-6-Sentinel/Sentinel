@@ -4,24 +4,20 @@ O monitor gera um FLUXO de transações novas, uma de cada vez, para clientes
 aleatórios do banco sintético, e passa cada uma pelo Risk Engine — como se
 fossem compras chegando em tempo real numa operação antifraude.
 
-Nada aqui decide o veredito. Cada transação é montada a partir dos cenários
-do Simulador (`build_scenarios`, calculados do histórico REAL do cliente
-sorteado) e avaliada com `engine.assess(compute_transaction_features(...))`,
-a mesma chamada de `score_new_transaction`. O monitor só acrescenta:
+Cada transação vem do gerador ao vivo (`src/synthetic/live_generator.py`),
+que segue as mesmas regras do gerador do banco e por isso traz o RÓTULO
+REAL (legítima, ou fraude de um dos 6 cenários). O motor recebe só os dados
+brutos — `engine.assess(compute_transaction_features(...))`, a mesma chamada
+de `score_new_transaction` — e nunca vê o rótulo. O monitor acrescenta:
 
-- o SORTEIO: qual cliente, e se a transação é uma compra normal ou um dos
-  cenários de fraude (com a proporção escolhida na tela);
-- uma pequena VARIAÇÃO no valor e no horário, para o fluxo não repetir
-  sempre os mesmos números (o horário só anda para frente, então a compra
-  continua posterior à última do cliente e não vira viagem impossível sem
-  querer);
-- o RESUMO do fluxo (contagens por ação, fraudes injetadas capturadas,
-  falsos alarmes, valor retido) para os indicadores da tela.
+- o VEREDITO binário: "Fraudulenta" quando o motor não aprova (revisar ou
+  bloquear — o mesmo critério da avaliação, "sinalizada = não aprovada
+  automaticamente"), "Legítima" quando aprova;
+- a comparação veredito × rótulo real e o RESUMO do fluxo (matriz de
+  confusão, acurácia, precisão, recall, valor retido) para o painel.
 
-"Fraude injetada" é o rótulo da SIMULAÇÃO (o cenário sorteado), não uma
-verdade sobre fraude real. Cada transação é avaliada contra o histórico do
-cliente no banco; as do próprio fluxo não entram nesse histórico — nada é
-gravado no banco.
+Nada é gravado no banco: cada transação é avaliada contra o histórico do
+cliente no banco; as do próprio fluxo não entram nesse histórico.
 """
 
 from __future__ import annotations
@@ -30,66 +26,64 @@ import random
 import re
 import time
 from collections import Counter
-from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from datetime import datetime
 
 import pandas as pd
-from simulator import (
-    CITY_BY_NAME,
-    NEW_DEVICE,
-    SCENARIO_IMPOSSIBLE_TRAVEL,
-    SCENARIO_NORMAL,
-    SCENARIOS,
-    CustomerContext,
-    FormValues,
-    build_scenarios,
-    load_context,
-)
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.risk.engine import ACTION_APPROVE, ACTION_BLOCK, ACTION_REVIEW, RiskEngine, RiskResult
 from src.risk.new_transaction import compute_transaction_features
-from src.synthetic.models import Customer
+from src.synthetic.live_generator import generate_live_transaction
+from src.synthetic.models import Channel, Customer, Device, FraudScenario, PaymentMethod
 
-SCENARIO_LABEL = dict(SCENARIOS)
-FRAUD_SCENARIOS = [key for key, _ in SCENARIOS if key != SCENARIO_NORMAL]
+NORMAL = "normal"
+SCENARIO_LABEL = {
+    NORMAL: "Compra normal",
+    FraudScenario.ANOMALIA_GEOGRAFICA.value: "Anomalia geográfica",
+    FraudScenario.VIAGEM_IMPOSSIVEL.value: "Viagem impossível",
+    FraudScenario.VALOR_ATIPICO.value: "Valor atípico",
+    FraudScenario.HORARIO_ATIPICO.value: "Horário atípico",
+    FraudScenario.COMBINACAO_DE_SINAIS.value: "Combinação de sinais",
+    FraudScenario.DISPOSITIVO_NOVO.value: "Dispositivo novo",
+}
+VERDICT_FRAUD, VERDICT_LEGIT = "Fraudulenta", "Legítima"
+LABEL_FRAUD, LABEL_LEGIT = "Fraude", "Legítima"
+
+CHANNEL_LABEL = {
+    (Channel.ONLINE.value, None): "Online",
+    (Channel.PRESENCIAL.value, PaymentMethod.APROXIMACAO.value): "Presencial · aproximação",
+    (Channel.PRESENCIAL.value, PaymentMethod.SENHA.value): "Presencial · senha",
+}
 
 # Semente do modo apresentação: com ela (e os mesmos controles), o fluxo
-# sorteia sempre a mesma sequência de clientes e cenários — dá para ensaiar.
+# sorteia sempre a mesma sequência de clientes e transações — dá para ensaiar.
 PRESENTATION_SEED = 2026
 
 # Quantas transações o monitor guarda (as mais antigas saem do fluxo).
 MAX_EVENTS = 500
 
-# Variação aplicada ao valor do cenário: compra normal varia mais (é o dia a
-# dia do cliente); nos cenários de fraude a variação é pequena para não
-# descaracterizar o sinal (ex.: "~10x a média").
-NORMAL_AMOUNT_RANGE = (0.6, 1.5)
-FRAUD_AMOUNT_RANGE = (0.9, 1.15)
-# Minutos acrescentados ao horário do cenário (só para frente).
-MAX_EXTRA_MINUTES = 40
-
 
 @dataclass(frozen=True)
 class LiveEvent:
-    """Uma transação do fluxo, já avaliada pelo motor."""
+    """Uma transação do fluxo, já avaliada pelo motor, com o rótulo real."""
 
     seq: int
     received_at: datetime  # relógio de parede: quando chegou ao monitor
     customer_id: int
     customer_name: str
     home_city: str
-    home_lat: float
-    home_lon: float
-    scenario: str
     city: str
     lat: float
     lon: float
     amount: float
     timestamp: datetime  # horário da transação no domínio sintético
-    device_id: int  # NEW_DEVICE = dispositivo novo, não reconhecido
     device_label: str
+    channel: str
+    payment_method: str | None
+    is_fraud: bool  # rótulo real (do gerador) — o motor não o vê
+    scenario: str  # NORMAL ou o .value do FraudScenario
     features: dict
     assessment: RiskResult
     decision_ms: float  # cálculo das features + avaliação do motor
@@ -99,45 +93,37 @@ class LiveEvent:
         return SCENARIO_LABEL[self.scenario]
 
     @property
-    def injected_fraud(self) -> bool:
-        return self.scenario != SCENARIO_NORMAL
+    def channel_label(self) -> str:
+        return CHANNEL_LABEL[(self.channel, self.payment_method)]
 
     @property
     def flagged(self) -> bool:
         """O motor NÃO aprovou automaticamente (revisar ou bloquear)."""
         return self.assessment.action != ACTION_APPROVE
 
+    @property
+    def verdict(self) -> str:
+        return VERDICT_FRAUD if self.flagged else VERDICT_LEGIT
+
+    @property
+    def label(self) -> str:
+        return LABEL_FRAUD if self.is_fraud else LABEL_LEGIT
+
+    @property
+    def correct(self) -> bool:
+        return self.flagged == self.is_fraud
+
 
 def customer_ids(session: Session) -> list[int]:
     return sorted(session.scalars(select(Customer.id)))
 
 
-def _device_label(ctx: CustomerContext, device_id: int) -> str:
-    if device_id == NEW_DEVICE:
+def _device_label(session: Session, device_id: int | None) -> str:
+    if device_id is None:
         return "novo, não reconhecido"
-    d = next((d for d in ctx.devices if d.id == device_id), None)
-    if d is None:
-        return f"#{device_id}"
-    return f"{d.device_type} #{d.id} ({'confiável' if d.is_trusted else 'não confiável'})"
-
-
-def pick_form(ctx: CustomerContext, rng: random.Random, fraud_rate: float) -> tuple[str, FormValues]:
-    """Sorteia o cenário (normal ou um de fraude que dê para montar para este
-    cliente) e aplica a variação de valor e horário.
-    """
-    scenarios = build_scenarios(ctx)
-    available = [key for key in FRAUD_SCENARIOS if scenarios.get(key) is not None]
-    if available and rng.random() < fraud_rate:
-        key = rng.choice(available)
-        low, high = FRAUD_AMOUNT_RANGE
-    else:
-        key = SCENARIO_NORMAL
-        low, high = NORMAL_AMOUNT_RANGE
-    form = scenarios[key]
-    amount = round(max(0.01, form.amount * rng.uniform(low, high)), 2)
-    # viagem impossível depende de poucos minutos desde a última compra: não mexe
-    extra = 0 if key == SCENARIO_IMPOSSIBLE_TRAVEL else rng.randint(0, MAX_EXTRA_MINUTES)
-    return key, replace(form, amount=amount, timestamp=form.timestamp + timedelta(minutes=extra))
+    d = session.get(Device, device_id)
+    kind = getattr(d.device_type, "value", d.device_type)
+    return f"{kind} #{d.id} ({'confiável' if d.is_trusted else 'não confiável'})"
 
 
 def next_event(
@@ -149,42 +135,42 @@ def next_event(
     ids: list[int],
     now: datetime | None = None,
 ) -> LiveEvent:
-    """Gera e avalia a próxima transação do fluxo."""
+    """Gera a próxima transação do fluxo e a avalia (sem passar o rótulo)."""
     if not ids:
         raise ValueError("o banco sintético não tem clientes")
-    ctx = load_context(session, rng.choice(ids))
-    scenario, form = pick_form(ctx, rng, fraud_rate)
-    city = CITY_BY_NAME[form.city]
-    device_id = None if form.device_id == NEW_DEVICE else form.device_id
+    tx = generate_live_transaction(session, rng, rng.choice(ids), fraud_rate)
+    customer = session.get(Customer, tx.customer_id)
     t0 = time.perf_counter()
     features = compute_transaction_features(
         session,
-        customer_id=form.customer_id,
-        amount=form.amount,
-        lat=city.lat,
-        lon=city.lon,
-        timestamp=form.timestamp,
-        device_id=device_id,
-        city=city.city,
+        customer_id=tx.customer_id,
+        amount=tx.amount,
+        lat=tx.lat,
+        lon=tx.lon,
+        timestamp=tx.timestamp,
+        device_id=tx.device_id,
+        city=tx.city,
+        channel=tx.channel,
+        payment_method=tx.payment_method,
     )
     assessment = engine.assess(features)
     decision_ms = (time.perf_counter() - t0) * 1000
     return LiveEvent(
         seq=seq,
         received_at=now or datetime.now(),
-        customer_id=ctx.customer_id,
-        customer_name=ctx.name,
-        home_city=ctx.home_city,
-        home_lat=ctx.home_lat,
-        home_lon=ctx.home_lon,
-        scenario=scenario,
-        city=city.city,
-        lat=city.lat,
-        lon=city.lon,
-        amount=form.amount,
-        timestamp=form.timestamp,
-        device_id=form.device_id,
-        device_label=_device_label(ctx, form.device_id),
+        customer_id=customer.id,
+        customer_name=customer.name,
+        home_city=customer.home_city,
+        city=tx.city,
+        lat=tx.lat,
+        lon=tx.lon,
+        amount=tx.amount,
+        timestamp=tx.timestamp,
+        device_label=_device_label(session, tx.device_id),
+        channel=tx.channel,
+        payment_method=tx.payment_method,
+        is_fraud=tx.is_fraud,
+        scenario=tx.fraud_scenario or NORMAL,
         features=features,
         assessment=assessment,
         decision_ms=decision_ms,
@@ -196,29 +182,36 @@ def next_event(
 # ----------------------------------------------------------------------
 
 
+def _ratio(num: int, den: int) -> float | None:
+    return num / den if den else None
+
+
 def summarize(events: list[LiveEvent]) -> dict:
-    """Indicadores do fluxo. "Capturada" = fraude injetada que o motor não
-    aprovou; "falso alarme" = compra normal que o motor não aprovou.
+    """Indicadores do fluxo: veredito × rótulo real (matriz de confusão) e
+    contagens por ação. Positivo = fraude.
     """
     actions = Counter(e.assessment.action for e in events)
-    injected = [e for e in events if e.injected_fraud]
-    normal = [e for e in events if not e.injected_fraud]
-    caught = sum(e.flagged for e in injected)
-    false_alarms = sum(e.flagged for e in normal)
+    tp = sum(e.flagged and e.is_fraud for e in events)
+    fp = sum(e.flagged and not e.is_fraud for e in events)
+    fn = sum(not e.flagged and e.is_fraud for e in events)
+    tn = sum(not e.flagged and not e.is_fraud for e in events)
     return {
         "total": len(events),
         "approved": actions.get(ACTION_APPROVE, 0),
         "review": actions.get(ACTION_REVIEW, 0),
         "blocked": actions.get(ACTION_BLOCK, 0),
-        "injected": len(injected),
-        "caught": caught,
-        "detection_rate": caught / len(injected) if injected else None,
-        "normal": len(normal),
-        "false_alarms": false_alarms,
-        "false_alarm_rate": false_alarms / len(normal) if normal else None,
+        "flagged": tp + fp,
+        "frauds": tp + fn,
+        "tp": tp,
+        "fp": fp,
+        "fn": fn,
+        "tn": tn,
+        "accuracy": _ratio(tp + tn, len(events)),
+        "precision": _ratio(tp, tp + fp),
+        "recall": _ratio(tp, tp + fn),
         "amount_total": sum(e.amount for e in events),
         "amount_held": sum(e.amount for e in events if e.flagged),
-        "avg_score": sum(e.assessment.risk_score for e in events) / len(events) if events else None,
+        "fraud_amount_held": sum(e.amount for e in events if e.flagged and e.is_fraud),
         "avg_decision_ms": sum(e.decision_ms for e in events) / len(events) if events else None,
     }
 
@@ -226,8 +219,9 @@ def summarize(events: list[LiveEvent]) -> dict:
 def events_frame(events: list[LiveEvent]) -> pd.DataFrame:
     """Uma linha por transação (mais recente primeiro), para tabela, mapa e gráficos."""
     columns = [
-        "#", "Chegada", "Cliente", "Valor", "Cidade", "Data/hora", "Dispositivo", "Cenário",
-        "Risk Score", "Nível", "Ação", "Distância (km)", "Decisão (ms)", "lat", "lon", "fraude_injetada",
+        "#", "Chegada", "Cliente", "Valor", "Cidade", "Canal", "Data/hora", "Dispositivo",
+        "Veredito", "Rótulo real", "Acerto", "Cenário", "Risk Score", "Nível", "Ação",
+        "Distância (km)", "Decisão (ms)", "lat", "lon",
     ]  # fmt: skip
     rows = [
         (
@@ -236,8 +230,12 @@ def events_frame(events: list[LiveEvent]) -> pd.DataFrame:
             e.customer_name,
             e.amount,
             e.city,
+            e.channel_label,
             e.timestamp,
             e.device_label,
+            e.verdict,
+            e.label,
+            "✓" if e.correct else "✗",
             e.scenario_label,
             e.assessment.risk_score,
             e.assessment.level,
@@ -246,7 +244,6 @@ def events_frame(events: list[LiveEvent]) -> pd.DataFrame:
             e.decision_ms,
             e.lat,
             e.lon,
-            e.injected_fraud,
         )
         for e in reversed(events)
     ]
@@ -268,14 +265,14 @@ def _reason_key(reason: str) -> str:
     """
     for sep in (":", "("):
         reason = reason.split(sep)[0]
-    reason = re.sub(r"\d[\d.,]*x?", "", reason)
-    return " ".join(reason.split()).rstrip(".")
+    reason = re.sub(r"\d[\d.,]*x?%?", "", reason)
+    return " ".join(reason.split()).rstrip(".,")
 
 
 def scenario_detection(events: list[LiveEvent]) -> pd.DataFrame:
-    """Por cenário: total, quantas o motor sinalizou e a taxa."""
+    """Por cenário (rótulo real): total, quantas o motor chamou de fraudulentas e a taxa."""
     rows = []
-    for key, label in SCENARIOS:
+    for key, label in SCENARIO_LABEL.items():
         group = [e for e in events if e.scenario == key]
         if group:
             flagged = sum(e.flagged for e in group)

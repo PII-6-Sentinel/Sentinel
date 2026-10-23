@@ -38,12 +38,19 @@ from sqlalchemy.orm import Session
 from src.risk.behavior_score import BehaviorConfig, behavior_score
 from src.risk.engine import RiskEngine, RiskResult, combine_scores
 from src.risk.new_transaction import compute_transaction_features
-from src.synthetic.generator import MAX_PLAUSIBLE_SPEED_KMH
+from src.synthetic.generator import CONTACTLESS_LIMIT_BRL, MAX_PLAUSIBLE_SPEED_KMH
 from src.synthetic.geo_reference import CITIES, CityRef, distance_km
-from src.synthetic.models import Customer, Device, Merchant, Transaction
+from src.synthetic.models import Channel, Customer, Device, Merchant, PaymentMethod, Transaction
 
 # Valor da opção "Novo dispositivo, não reconhecido" no seletor de dispositivo.
 NEW_DEVICE = -1
+
+# Canal e forma de pagamento (Etapa 12): (canal, forma de pagamento) -> rótulo.
+CHANNEL_OPTIONS: dict[tuple[str, str | None], str] = {
+    (Channel.PRESENCIAL.value, PaymentMethod.SENHA.value): "Presencial · senha",
+    (Channel.PRESENCIAL.value, PaymentMethod.APROXIMACAO.value): "Presencial · aproximação",
+    (Channel.ONLINE.value, None): "Online",
+}
 
 # Velocidade (km/h) usada para escolher horários plausíveis nos cenários que
 # NÃO são de viagem impossível: bem abaixo dos 900 km/h do limiar.
@@ -74,9 +81,9 @@ SCENARIO_HELP = {
     SCENARIO_IMPOSSIBLE_TRAVEL: "A cidade mais distante da última compra, poucos minutos depois dela.",
     SCENARIO_ATYPICAL_AMOUNT: "Cerca de 10x o valor médio do cliente, no resto igual à compra normal.",
     SCENARIO_ATYPICAL_HOUR: "Horário do lado oposto da janela habitual do cliente, no resto igual à compra normal.",
-    SCENARIO_NEW_DEVICE: "Dispositivo novo, não reconhecido, no resto igual à compra normal.",
+    SCENARIO_NEW_DEVICE: "Dispositivo novo, não reconhecido, numa compra online; no resto igual à compra normal.",
     SCENARIO_NEW_CITY: "Cidade que o cliente nunca visitou, a cerca de 2.000 km da residência.",
-    SCENARIO_COMBINED: "Dispositivo novo, horário do lado oposto da janela habitual e cerca de 10x o valor médio, na cidade natal.",
+    SCENARIO_COMBINED: "Dispositivo novo (online), horário do lado oposto da janela habitual e cerca de 10x o valor médio, na cidade natal.",
 }
 
 CITY_BY_NAME: dict[str, CityRef] = {c.city: c for c in CITIES}
@@ -127,6 +134,7 @@ class CustomerContext:
     first_timestamp: datetime | None
     last: LastPurchase | None
     city_counts: dict[str, int]
+    channel_counts: dict[tuple[str, str | None], int] = field(default_factory=dict)  # (canal, pagamento) -> compras
     recent: pd.DataFrame = field(default_factory=pd.DataFrame)
 
     @property
@@ -172,8 +180,11 @@ def load_context(session: Session, customer_id: int) -> CustomerContext:
         .order_by(Transaction.timestamp, Transaction.id)
     ).all()
     city_counts: dict[str, int] = {}
-    for _, city, _ in rows:
+    channel_counts: dict[tuple[str, str | None], int] = {}
+    for tx, city, _ in rows:
         city_counts[city] = city_counts.get(city, 0) + 1
+        key = (tx.channel, tx.payment_method)
+        channel_counts[key] = channel_counts.get(key, 0) + 1
 
     last = None
     recent = pd.DataFrame(columns=["ID", "Data/hora", "Valor", "Cidade", "Dispositivo"])
@@ -205,6 +216,7 @@ def load_context(session: Session, customer_id: int) -> CustomerContext:
         first_timestamp=rows[0][0].timestamp if rows else None,
         last=last,
         city_counts=city_counts,
+        channel_counts=channel_counts,
         recent=recent,
     )
 
@@ -223,6 +235,8 @@ class FormValues:
     amount: float
     timestamp: datetime
     device_id: int
+    channel: str = Channel.PRESENCIAL.value
+    payment_method: str | None = PaymentMethod.SENHA.value
 
 
 def validate_timestamp(ctx: CustomerContext, timestamp: datetime) -> str | None:
@@ -281,9 +295,25 @@ def known_device_id(ctx: CustomerContext) -> int:
     return chosen[0].id
 
 
+def habitual_channel(ctx: CustomerContext) -> tuple[str, str | None]:
+    """(canal, forma de pagamento) mais usado pelo cliente; sem histórico,
+    presencial com senha.
+    """
+    if not ctx.channel_counts:
+        return Channel.PRESENCIAL.value, PaymentMethod.SENHA.value
+    return max(ctx.channel_counts, key=lambda k: (ctx.channel_counts[k], k[0], k[1] or ""))
+
+
+def _payable(channel: tuple[str, str | None], amount: float) -> tuple[str, str | None]:
+    """Aproximação só vale até o limite sem senha; acima dele, a compra presencial é com senha."""
+    if channel == (Channel.PRESENCIAL.value, PaymentMethod.APROXIMACAO.value) and amount > CONTACTLESS_LIMIT_BRL:
+        return Channel.PRESENCIAL.value, PaymentMethod.SENHA.value
+    return channel
+
+
 def build_scenarios(ctx: CustomerContext) -> dict[str, FormValues | None]:
     """Valores de formulário de cada cenário de demonstração, calculados do
-    histórico REAL do cliente. Um cenário que não dá para montar (ex.: não
+    histórico REAL do cliente (inclusive o canal habitual). Um cenário que não dá para montar (ex.: não
     sobrou cidade nunca visitada) vem como None. Não roda análise nenhuma.
     """
     home = CITY_BY_NAME.get(ctx.home_city) or CityRef(ctx.home_city, ctx.home_state, "", ctx.home_lat, ctx.home_lon)
@@ -291,8 +321,14 @@ def build_scenarios(ctx: CustomerContext) -> dict[str, FormValues | None]:
     avg = round(ctx.avg_amount_baseline, 2)
     device = known_device_id(ctx)
 
+    # Canal: o habitual do cliente, para o cenário só mudar o que promete. Com
+    # dispositivo novo, online — é uma compra por aplicativo/site, como no
+    # gerador do banco (o fraudador não tem a senha do cartão).
+    habitual = habitual_channel(ctx)
+
     def form(city: CityRef, amount: float, when: datetime, dev: int = device) -> FormValues:
-        return FormValues(ctx.customer_id, city.city, amount, when, dev)
+        channel = (Channel.ONLINE.value, None) if dev == NEW_DEVICE else _payable(habitual, amount)
+        return FormValues(ctx.customer_id, city.city, amount, when, dev, *channel)
 
     scenarios: dict[str, FormValues | None] = {
         SCENARIO_NORMAL: form(home, avg, _next_slot(ctx, home, usual)),
@@ -444,8 +480,10 @@ def simulate(
         timestamp=form.timestamp,
         device_id=device_id,
         city=city.city,
+        channel=form.channel,
+        payment_method=form.payment_method,
     )
-    finish(label, "distância, valor, horário, dispositivo, cidade e velocidade implícita", t0)
+    finish(label, "distância, valor, horário, dispositivo, cidade, canal e velocidade implícita", t0)
 
     # leituras dos valores intermediários reais
     km_home = features["distance_from_home_km"]
@@ -509,6 +547,15 @@ def simulate(
         city_text = f"{city.city} NUNCA visitada — primeira compra do cliente nesta cidade"
     finish("Cidade", city_text, None)
 
+    channel_label = CHANNEL_OPTIONS[(form.channel, form.payment_method if form.channel != Channel.ONLINE.value else None)]
+    if ctx.n_transactions == 0:
+        channel_text = f"{channel_label}: cliente sem histórico para comparar"
+    else:
+        share = (1.0 - features["channel_rarity"]) * 100
+        channel_text = f"{channel_label} — {_fmt_int(share)}% das compras anteriores do cliente foram por este canal"
+    finish("Canal e forma de pagamento", channel_text, None)
+    facts["channel_rarity"] = features["channel_rarity"]
+
     # 3. ML e regras (cada uma isolada, para mostrar os dois scores e o tempo)
     label = "Aplicando o modelo de ML"
     t0 = begin(label)
@@ -560,6 +607,7 @@ def history_row(result: SimulationResult) -> dict:
         "Cliente": result.context.name,
         "Valor": result.form.amount,
         "Cidade": result.city.city,
+        "Canal": CHANNEL_OPTIONS[(result.form.channel, result.form.payment_method if result.form.channel != Channel.ONLINE.value else None)],
         "Data/hora": result.form.timestamp,
         "Risk Score": a.risk_score,
         "Nível": a.level,
