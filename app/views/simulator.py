@@ -21,7 +21,7 @@ from datetime import date, datetime
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from risk_analysis import DatabaseNotFound, resolve_db_path, run_analysis
+from risk_analysis import DatabaseNotFound, database_problem, resolve_db_path, run_analysis
 from simulator import (
     CHANNEL_OPTIONS,
     CITY_NAMES,
@@ -510,12 +510,9 @@ def render():
         f"Atenção: {SIMULATION_NOTICE}."
     )
     db_path = resolve_db_path()
-    if not db_path.exists():
-        st.error(
-            "**Banco sintético não encontrado.** Gere-o com `python scripts/generate_mock_data.py` "
-            "(é determinístico: seed fixa) e recarregue a página.",
-            icon=":material/database_off:",
-        )
+    problem = database_problem(db_path)
+    if problem:
+        st.error(problem, icon=":material/database_off:")
         return
 
     sa_engine = create_engine(f"sqlite:///{db_path}")

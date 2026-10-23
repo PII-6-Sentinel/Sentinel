@@ -38,7 +38,7 @@ from live_monitor import (
     scenario_detection,
     summarize,
 )
-from risk_analysis import resolve_db_path, run_analysis
+from risk_analysis import database_problem, resolve_db_path, run_analysis
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from theme import (
@@ -472,12 +472,9 @@ def render():
     )
     simulation_notice(SIMULATION_NOTICE)
 
-    if not resolve_db_path().exists():
-        st.error(
-            "**Banco sintético não encontrado.** Gere-o com `python scripts/generate_mock_data.py` "
-            "(é determinístico: seed fixa) e recarregue a página.",
-            icon=":material/database_off:",
-        )
+    problem = database_problem(resolve_db_path())
+    if problem:
+        st.error(problem, icon=":material/database_off:")
         return
 
     # duas linhas: em telas estreitas (projetor) cinco colunas cortavam os botões

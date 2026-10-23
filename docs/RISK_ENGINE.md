@@ -376,50 +376,46 @@ com `build_risk_table`.
 
 O Simulador (`app/views/simulator.py`) tem sete cenários que só preenchem o
 formulário, com valores calculados do histórico do cliente escolhido; quem
-classifica é o motor. Rodando cada cenário para **todos os 130 clientes**
-com o motor atual (30% regras / 70% ML; faixas internas 73 e 81):
+classifica é o motor. Desde a Etapa 12, cada cenário usa o **canal habitual
+do cliente** (o par canal/forma de pagamento mais frequente no histórico;
+aproximação só até R$ 200), para mudar só o sinal que promete — exceto os
+cenários com **dispositivo novo**, que são **online**, como no gerador do
+banco. Rodando cada cenário para **todos os 130 clientes** com o motor atual
+(30% regras / 70% ML; faixas internas 73 e 82):
 
 | Cenário | O que preenche | Score interno (mín–máx) | Risk Score exibido | Resultado nos 130 clientes |
 |---|---|---|---|---|
-| Compra normal | cidade natal, valor médio, horário habitual, dispositivo conhecido | 0 | 0 | 130 baixo (aprovar) |
-| Viagem impossível | cidade mais distante da última compra, 20 min depois | 82–100 | 72–100 (mediana 93) | 130 alto (bloquear) |
-| Valor atípico | 10x o valor médio | 77 | 50 | 130 médio (revisar) |
-| Horário atípico | lado oposto da janela habitual (5,5 a 8 h fora) | 74 | 35 | 130 médio (revisar) |
-| Dispositivo novo | "Novo dispositivo, não reconhecido" | 71–73 | 29–30 | **130 baixo (aprovar)** |
-| Cidade nova | cidade nunca visitada, ~2.000 km da residência | 67–81 | 27–70 (mediana 55) | 128 médio, **2 baixo** |
-| Combinação de sinais | dispositivo novo + horário do lado oposto da janela + 10x o valor médio, na cidade natal | 93 | 89 | **130 alto (bloquear)** |
+| Compra normal | cidade natal, valor médio, horário habitual, dispositivo e canal habituais | 0 | 0 | 130 baixo (aprovar) |
+| Viagem impossível | cidade mais distante da última compra, 20 min depois | 74–100 | 35–100 (mediana 92) | 129 alto (bloquear), 1 médio |
+| Valor atípico | 10x o valor médio | 77 | 48 | 130 médio (revisar) |
+| Horário atípico | lado oposto da janela habitual | 74–75 | 35–39 | 130 médio (revisar) |
+| Dispositivo novo | "Novo dispositivo, não reconhecido", online | 73–78 | 30–53 (mediana 39) | 125 médio, **5 baixo** |
+| Cidade nova | cidade nunca visitada, ~2.000 km da residência | 52–83 | 21–72 (mediana 35) | **59 baixo**, 47 médio, 24 alto |
+| Combinação de sinais | dispositivo novo (online) + horário do lado oposto da janela + 10x o valor médio | 93–97 | 89–95 | **130 alto (bloquear)** |
 
 O que a equipe precisa saber antes da banca:
 
-- **Dispositivo novo, sozinho, é aprovado** em todos os clientes. As regras
-  somam 35 pontos (novo 20 + não confiável 15) e o ML dá ~89, o que resulta
-  em score interno 71–73 contra o limiar de revisão 73 ("revisar acima de
-  73"): fica de 0 a 2 pontos abaixo. O motivo aparece na lista ("Dispositivo
-  nunca usado antes… não confiável"), mas não muda a ação. Sinais de
-  dispositivo só levam a revisão combinados a outro sinal.
-- **Horário atípico é revisado por 1 ponto** (74 contra 73), em todos os
-  clientes. É frágil: uma calibração um pouco diferente dos limiares o
-  aprovaria.
-- **Cidade nova isolada fica no meio da faixa de revisão** (mediana 55 exibido,
-  score interno ~78, limiar de bloqueio 81), mas 2 clientes, cuja cidade
-  inédita mais próxima de 2.000 km ficou a ~500 km, ficam em 27 (aprovada).
-  É a mesma limitação da seção 8, item 2: uma primeira visita legítima e uma
-  fraude geográfica têm os mesmos sinais.
-- **Só a viagem impossível chega a "alto" (bloquear) entre os sinais
-  isolados.** Valor, horário e cidade nova, isolados, no máximo vão para
-  revisão. Todos os 130 casos de
-  viagem impossível passam de 81 por pontuação própria (ML ~100 + regras 85),
-  e não só pelo piso de "médio".
+- **Cidade nova isolada é aprovada em 59 dos 130 clientes.** Antes da Etapa
+  12 eram 2. Nos aprovados a compra é presencial com senha (o canal habitual
+  deles), e o ML, que agora lê o canal, dá a ela menos risco (mediana 82,
+  contra 97 nos revisados): nos dados, só 25% das fraudes usam a senha
+  (cartão clonado). As regras dão 45 nos dois casos. É o comportamento real
+  do modelo, e o mesmo dilema da limitação 2: uma primeira visita legítima e
+  uma fraude geográfica com senha têm os mesmos sinais. Na avaliação com as
+  fraudes geradas (seção 6.1), `anomalia_geografica` subiu de 7 para 9 de 11.
+- **Dispositivo novo, sozinho, agora vai para revisão** (125 de 130; antes,
+  130 aprovados). O cenário passou a ser online, como as fraudes desse tipo
+  no banco; presencial com senha, o ML o aprovaria.
+- **Horário atípico continua revisado por 1 a 2 pontos** (74–75 contra 73).
+  É frágil: uma calibração um pouco diferente dos limiares o aprovaria.
+- **Só a viagem impossível chega a "alto" entre os sinais isolados** (mais
+  algumas cidades novas). Valor e horário, isolados, vão para revisão. O
+  único caso "médio" de viagem impossível tem score interno 74 (revisa, não
+  bloqueia).
 - **A combinação de sinais chega a "alto" nos 130 clientes** (score interno
-  93, Risk Score exibido 89; o limiar de bloqueio é 81, então passa com 12
-  pontos de folga). As regras somam 75 (dispositivo novo 20 + não confiável
-  15 + valor 25 + horário 15) e o ML satura em 100. Isoladamente, os mesmos
-  três sinais dão 71–73, 74 e 77 (aprovar, revisar, revisar): é a soma que
-  muda a ação. Parte do 100 do ML vem do artefato do horário (limitação 3),
-  então a folga aqui não é uma medida de robustez em dados reais.
-- Os resultados não dependem do conjunto do cliente: nos 39 clientes de
-  teste a distribuição é a mesma (a exceção é a cidade nova: 1 baixo, 38
-  médio).
+  93–97, limiar de bloqueio 82). Isoladamente, os mesmos sinais revisam ou
+  aprovam: é a soma que muda a ação. Parte do 100 do ML vem do artefato do
+  horário (limitação 3), então a folga não mede robustez em dados reais.
 
 Esses números são o comportamento real do motor com dados sintéticos; não
 foram ajustados para que os cenários "dêem certo".
