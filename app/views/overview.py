@@ -1,7 +1,6 @@
 """Página 'Visão Geral' — a proposta de produto do Sentinel.
 
-Não carrega nenhum dataset: é texto e estrutura, então abre instantaneamente
-e funciona mesmo sem o CSV do Kaggle baixado.
+Não carrega nenhum dataset: é texto e estrutura, então abre instantaneamente.
 
 Os dois botões do topo navegam de verdade: escolhem a página no mesmo
 `st.radio` da barra lateral (chave `nav_product`).
@@ -85,8 +84,8 @@ def _architecture() -> None:
         "Valida o método antes de usá-lo",
         "<p>Comparação de modelos, métricas, validação cruzada e análise de threshold sobre um dataset público "
         "do Kaggle. É a base que fundamenta as escolhas do motor de risco.</p>"
-        '<p style="margin-top:16px">Fica atrás do botão <b style="color:var(--text)">Ver Metodologia Científica '
-        "(Kaggle)</b>, no rodapé da barra lateral.</p>",
+        '<p style="margin-top:16px">Fica no repositório do projeto (<b style="color:var(--text)">notebooks/</b> '
+        "e <b style=\"color:var(--text)\">src/</b>), fora do app: aqui aparece só o produto.</p>",
     )
     operational = layer_card(
         "Camada 2 · Operacional",
@@ -111,7 +110,7 @@ def _status_and_planning() -> None:
                 "Componente": [
                     "Domínio sintético (clientes, cartões, dispositivos, transações)",
                     "Features comportamentais",
-                    "Validação científica dos modelos (dataset Kaggle)",
+                    "Validação científica dos modelos (dataset Kaggle, no repositório)",
                     "Risk Engine",
                     "Central de Transações",
                     "Simulador ao vivo",

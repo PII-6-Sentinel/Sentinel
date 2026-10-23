@@ -23,19 +23,13 @@ Sentinel/
 ├── app/                       # aplicação Streamlit (apresentação/demo)
 │   ├── app.py                 # ponto de entrada: streamlit run app/app.py
 │   ├── theme.py                # paleta de cores e CSS
-│   ├── pipeline.py             # cache de dados/modelos do Kaggle (st.cache_data/cache_resource)
 │   ├── risk_analysis.py        # camada fina sobre src/risk/ para a Central (sem Streamlit, sem cache)
 │   ├── simulator.py            # camada fina do Simulador: contexto do cliente, cenários, raciocínio (sem Streamlit)
 │   ├── ui.py                   # formatação pt-BR, cartões, mapa e estilo de tabela compartilhados
 │   └── views/                  # uma página por módulo
 │       ├── overview.py         # PRODUTO: Visão Geral (proposta do Sentinel)
 │       ├── transactions.py     # PRODUTO: Central de Transações (análise de risco ao vivo)
-│       ├── simulator.py        # PRODUTO: Simulador (descreva uma transação, veja a análise)
-│       └── scientific/         # 🔬 Metodologia Científica (Kaggle) — atrás de 1 botão
-│           ├── eda.py              # Análise Exploratória
-│           ├── models_page.py      # Comparação de Modelos (+ validação cruzada)
-│           ├── threshold_analysis.py  # Análise de Threshold
-│           └── demo.py             # Demo (dataset Kaggle)
+│       └── simulator.py        # PRODUTO: Simulador (descreva uma transação, veja a análise)
 ├── .streamlit/
 │   └── config.toml            # tema de cores nativo do Streamlit
 ├── data/
@@ -83,8 +77,7 @@ carregamento de dados, o split treino/teste, o balanceamento de classes e
 o treino dos modelos do zero, é fácil introduzir inconsistências sutis que
 invalidam a comparação entre modelos. Colocando essa lógica em `src/` como
 funções puras, tanto os notebooks quanto o app Streamlit partem exatamente
-da mesma base — o app é só uma camada de visualização sobre `src/`
-(`app/pipeline.py` adiciona cache em cima das mesmas funções).
+da mesma base — o app é só uma camada de visualização sobre `src/`.
 
 ## 1. Pré-requisitos
 
@@ -197,13 +190,13 @@ streamlit run app/app.py
 
 Isso abre automaticamente uma aba no navegador em `http://localhost:8501`.
 
-O app tem **duas seções, com pesos diferentes de propósito**. O que é
-avaliado é o **produto** (uma plataforma de análise de risco transacional
-para uma instituição financeira); a validação científica é a base
-metodológica dele, mas não compete por atenção com ele.
+O app mostra **só o produto** (uma plataforma de análise de risco
+transacional para uma instituição financeira) e não precisa do dataset do
+Kaggle. A validação científica dos modelos sobre o Kaggle — base
+metodológica do produto — continua no repositório (`notebooks/` e `src/`),
+fora do app.
 
-**Produto** — a navegação principal da barra lateral (não precisa do
-dataset do Kaggle):
+Páginas da barra lateral:
 
 | Página | O que mostra |
 |---|---|
@@ -292,22 +285,6 @@ resultado coincide com `score_new_transaction` para a mesma entrada.
 que uma anomalia fica abaixo do limiar de revisão (por exemplo, dispositivo
 novo isolado). Isso é um comportamento do motor atual, não da página — ver
 "Resultados dos cenários de demonstração" em `docs/RISK_ENGINE.md`.
-
-**🔬 Metodologia Científica (Kaggle)** — um único botão discreto no rodapé
-da barra lateral ("🔬 Ver Metodologia Científica (Kaggle) →") abre esta
-seção, com um cabeçalho explicando seu papel e um "← Voltar ao produto".
-Precisa de `data/raw/creditcard.csv`. Na primeira vez que a página
-**Comparação de Modelos** (ou **Demo**, ou **Análise de Threshold**) é
-aberta, o app treina os três modelos — leva alguns segundos; depois disso
-fica em cache (`st.cache_resource`) e as trocas de página/filtro são
-instantâneas.
-
-| Página | O que mostra |
-|---|---|
-| **Análise Exploratória** | Distribuição de classes, `Amount` por classe e correlações — versão interativa do notebook |
-| **Comparação de Modelos** | Matriz de confusão, precisão, recall, F1, curvas ROC/PR no conjunto de teste, e uma seção separada de validação cruzada (estabilidade dos modelos) |
-| **Análise de Threshold** | Simula, para qualquer um dos 3 modelos, como mudar o limiar de decisão altera precisão/recall/F1/matriz de confusão — sem retreinar nada |
-| **Demo (dataset Kaggle)** | Escolha uma transação real do conjunto de teste e veja a classificação de qualquer um dos 3 modelos na hora, com um gauge de score de risco |
 
 ### Score, threshold e decisão (`src/models.py`)
 
