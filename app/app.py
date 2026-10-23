@@ -27,7 +27,7 @@ for path in (PROJECT_ROOT, APP_DIR):
 
 from theme import ASSETS_DIR, inject_css  # noqa: E402
 from ui import brand_html  # noqa: E402
-from views import overview, simulator, transactions  # noqa: E402
+from views import live_monitor, overview, simulator, transactions  # noqa: E402
 
 st.set_page_config(
     page_title="Sentinel — Análise de Risco Transacional",
@@ -40,6 +40,7 @@ PRODUCT_PAGES = {
     "Visão Geral": overview,
     "Central de Transações": transactions,
     "Simulador": simulator,
+    "Monitor ao Vivo": live_monitor,
 }
 
 with st.sidebar:

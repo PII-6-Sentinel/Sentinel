@@ -106,7 +106,15 @@ def test_scenarios_are_exactly_the_seven_requested_ones():
 
 
 def test_scenario_forms_carry_inputs_only_never_a_result():
-    assert set(sim.FormValues.__dataclass_fields__) == {"customer_id", "city", "amount", "timestamp", "device_id"}
+    assert set(sim.FormValues.__dataclass_fields__) == {
+        "customer_id",
+        "city",
+        "amount",
+        "timestamp",
+        "device_id",
+        "channel",
+        "payment_method",
+    }
 
 
 def test_every_scenario_is_valid_for_every_customer(db, customer_ids):
@@ -355,6 +363,7 @@ def test_reasoning_steps_are_in_order_and_announced_to_the_callback(db, risk_eng
         "Valor em relação à média",
         "Dispositivo",
         "Cidade",
+        "Canal e forma de pagamento",
         "Aplicando o modelo de ML",
         "Aplicando as regras",
         "Combinando no Risk Score",
@@ -421,3 +430,13 @@ def test_history_row_has_the_session_table_columns(db, risk_engine, customer_ids
     assert {"Cliente", "Valor", "Cidade", "Risk Score", "Nível", "Ação"} <= set(row)
     assert row["Cliente"] == result.context.name and row["Risk Score"] == result.assessment.risk_score
     assert isinstance(row["Data/hora"], datetime)
+
+
+def test_channel_reaches_the_features_and_the_reasoning(db, risk_engine, customer_ids):
+    ctx = _ctx(db, customer_ids[1])
+    normal = sim.build_scenarios(ctx)[sim.SCENARIO_NORMAL]
+    online = sim.FormValues(**{**normal.__dict__, "channel": "online", "payment_method": None})
+    result = _simulate(db, risk_engine, online)
+    assert result.features["is_online"] is True
+    step = next(s for s in result.steps if s.label == "Canal e forma de pagamento")
+    assert step.detail.startswith("Online")

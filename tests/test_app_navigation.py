@@ -24,7 +24,12 @@ def _button(at: AppTest, label: str):
 def test_main_navigation_only_lists_operational_pages():
     at = _run()
     assert not at.exception
-    assert at.sidebar.radio(key="nav_product").options == ["Visão Geral", "Central de Transações", "Simulador"]
+    assert at.sidebar.radio(key="nav_product").options == [
+        "Visão Geral",
+        "Central de Transações",
+        "Simulador",
+        "Monitor ao Vivo",
+    ]
 
 
 def test_scientific_pages_are_not_in_the_app():

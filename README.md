@@ -25,11 +25,13 @@ Sentinel/
 │   ├── theme.py                # paleta de cores e CSS
 │   ├── risk_analysis.py        # camada fina sobre src/risk/ para a Central (sem Streamlit, sem cache)
 │   ├── simulator.py            # camada fina do Simulador: contexto do cliente, cenários, raciocínio (sem Streamlit)
+│   ├── live_monitor.py         # camada fina do Monitor ao Vivo: fluxo, veredito × rótulo, resumo (sem Streamlit)
 │   ├── ui.py                   # formatação pt-BR, cartões, mapa e estilo de tabela compartilhados
 │   └── views/                  # uma página por módulo
 │       ├── overview.py         # PRODUTO: Visão Geral (proposta do Sentinel)
 │       ├── transactions.py     # PRODUTO: Central de Transações (análise de risco ao vivo)
-│       └── simulator.py        # PRODUTO: Simulador (descreva uma transação, veja a análise)
+│       ├── simulator.py        # PRODUTO: Simulador (descreva uma transação, veja a análise)
+│       └── live_monitor.py     # PRODUTO: Monitor ao Vivo (fluxo em tempo real, veredito × rótulo real)
 ├── .streamlit/
 │   └── config.toml            # tema de cores nativo do Streamlit
 ├── data/
@@ -47,6 +49,7 @@ Sentinel/
 │       ├── models.py             # ORM SQLAlchemy (Customer, Card, Device, Merchant, Transaction)
 │       ├── geo_reference.py      # cidades reais (lat/lon) + distância geodésica local
 │       ├── generator.py          # gerador determinístico (perfis + 6 cenários de fraude)
+│       ├── live_generator.py     # gerador ao vivo: uma transação nova por vez, com o rótulo real
 │       ├── features.py           # features comportamentais (funções puras)
 │       └── feature_pipeline.py   # build_feature_table(session): banco -> DataFrame
 │   └── risk/                     # Risk Engine (só domínio sintético)
@@ -203,6 +206,22 @@ Páginas da barra lateral:
 | **Visão Geral** | A proposta do Sentinel, os sinais que considera, o estado do projeto e (recolhido) o planejamento SWOT/GUT |
 | **Central de Transações** | A tela principal do produto: abre vazia e, ao clicar em "Executar análise de risco", processa o banco sintético ao vivo (ver abaixo) |
 | **Simulador** | Descreva uma transação de um cliente e veja o Sentinel analisá-la ao vivo, passo a passo (ver abaixo) |
+| **Monitor ao Vivo** | Fluxo de transações em tempo real: cada uma recebe o veredito "Fraudulenta" ou "Legítima", mostrado ao lado do rótulo real (ver abaixo) |
+
+#### Monitor ao Vivo
+
+Com **Transmitir ao vivo** ligado, chega uma transação nova a cada intervalo
+(0,5 a 5 s), para um cliente sorteado do banco sintético. Ela vem do gerador
+ao vivo (`src/synthetic/live_generator.py`), que segue as mesmas regras do
+gerador do banco — compra normal, ou um dos 6 cenários de fraude na
+proporção escolhida — e por isso traz o **rótulo real**. O motor recebe só
+os dados brutos (nunca o rótulo) e dá o **veredito**: *Fraudulenta* quando
+não aprova (revisar ou bloquear), *Legítima* quando aprova. O painel mostra
+os dois lado a lado, com a matriz de confusão ao vivo, acurácia, recall,
+precisão, valor retido, mapa, linha do tempo do Risk Score, sinais mais
+frequentes e o feed. **Modo apresentação** fixa a sequência sorteada (para
+ensaiar a demonstração); **Gerar 10 agora** preenche o painel sem esperar.
+Nada é gravado no banco.
 
 #### Central de Transações
 

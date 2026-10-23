@@ -93,9 +93,9 @@ def _architecture() -> None:
         numbered_list(
             [
                 ("Domínio sintético", "clientes, cartões, dispositivos e transações"),
-                ("Features comportamentais", "valor, distância, velocidade, horário e dispositivo"),
+                ("Features comportamentais", "valor, distância, velocidade, horário, dispositivo e canal"),
                 ("Risk Engine", "modelo de ML (70%) + regras (30%) → Risk Score"),
-                ("Central de Transações e Simulador", "análise em lote e transação a transação"),
+                ("Central, Simulador e Monitor ao Vivo", "em lote, transação a transação e em tempo real"),
             ]
         ),
     )
@@ -114,8 +114,9 @@ def _status_and_planning() -> None:
                     "Risk Engine",
                     "Central de Transações",
                     "Simulador ao vivo",
+                    "Monitor ao Vivo",
                 ],
-                "Situação": ["Pronto", "Pronto", "Pronto", "Pronto", "Pronto", "Pronto"],
+                "Situação": ["Pronto", "Pronto", "Pronto", "Pronto", "Pronto", "Pronto", "Pronto"],
             },
             hide_index=True,
         )
