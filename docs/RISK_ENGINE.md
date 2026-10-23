@@ -321,6 +321,44 @@ da base têm `new_city = True`). Parte do ganho em `anomalia_geografica`
 é, portanto, circular: em dados reais, fraudes geográficas também
 acontecem em cidades que o cliente já visitou.
 
+## 6.1 Etapa 12 — canal e forma de pagamento
+
+**Dados:** cada transação tem `channel` (`online` ou `presencial`) e, se
+presencial, `payment_method` (`aproximacao` ou `senha`). Cada cliente tem
+um hábito de canal (`online_share`, `contactless_share`). Normais seguem o
+hábito; acima de R$ 200 a compra presencial sempre exige senha. Fraudes
+seguem a lógica do golpe: 25% são cartão clonado com senha capturada
+(presencial com senha); as demais são online (acima de R$ 200, metade
+abaixo disso) ou por aproximação; "dispositivo novo" é sempre online. O
+canal é sorteado por um gerador próprio, então as transações das etapas
+anteriores não mudam.
+
+**Features:** `is_online`, `is_contactless` e `channel_rarity` (1 − fração
+das compras ANTERIORES do cliente no mesmo canal; 0 sem histórico). Entram
+no ML e em duas regras: canal raro (5 a 15 pontos a partir de 0,7) e
+aproximação com valor ≥ 1,5x a média (10 pontos).
+
+**O ML não vê o rótulo:** `tests/test_risk_label_leakage.py` garante que a
+matriz de entrada só tem `ML_FEATURES` (sem `is_fraud`/`fraud_scenario`), que
+o score não muda se o rótulo for invertido ou removido, e que as features
+são idênticas com os rótulos do banco invertidos.
+
+**Resultado (teste, mesma metodologia):**
+
+| | antes | depois |
+|---|---|---|
+| Motor: fraudes capturadas | 50/56 (89%) | 53/56 (95%) |
+| Motor: falsos positivos | 24 | 23 |
+| Motor: PR-AUC | 0,804 | 0,825 |
+| Só regras: PR-AUC | 0,641 | 0,678 |
+| Só ML: PR-AUC | 0,929 | 0,929 |
+
+O ganho vem quase todo de `horario_atipico` (9 → 10 de 11) e de
+`anomalia_geografica` (7 → 9 de 11). Mesma ressalva de circularidade: o
+canal das fraudes foi gerado com uma regra, e o modelo a aprende. No ML,
+`channel_rarity` tem coeficiente negativo por colinearidade com
+`is_online` — o efeito conjunto de "online raro" continua positivo.
+
 ## 7. Transação nova
 
 `src/risk/new_transaction.py`: `score_new_transaction(session, engine,

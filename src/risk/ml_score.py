@@ -41,6 +41,9 @@ ML_FEATURES = [
     "device_untrusted",
     "log_speed_kmh",
     "is_impossible_travel",
+    "is_online",
+    "is_contactless",
+    "channel_rarity",
 ]
 
 
@@ -63,6 +66,9 @@ def ml_feature_matrix(features: pd.DataFrame) -> pd.DataFrame:
             "device_untrusted": features["device_untrusted"].astype(float),
             "log_speed_kmh": np.log1p(features["implied_speed_kmh"].astype(float).clip(lower=0)),
             "is_impossible_travel": features["is_impossible_travel"].astype(float),
+            "is_online": features["is_online"].astype(float),
+            "is_contactless": features["is_contactless"].astype(float),
+            "channel_rarity": features["channel_rarity"].astype(float),
         },
         columns=ML_FEATURES,
     )
@@ -90,6 +96,9 @@ class MLScorer:
         """Treina em `train` (tabela de risco com coluna `is_fraud`).
 
         Só deve receber o conjunto de TREINO — nunca validação nem teste.
+        O rótulo (`is_fraud`) é só o alvo `y`: a matriz de entrada vem de
+        `ml_feature_matrix`, que lê apenas `ML_FEATURES` — nem `is_fraud`
+        nem `fraud_scenario` entram (testado em tests/test_risk_label_leakage.py).
         """
         y = train["is_fraud"].astype(int)
         if y.nunique() < 2:

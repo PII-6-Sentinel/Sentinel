@@ -18,10 +18,15 @@ coordenadas; sem `city` explícita, usa-se a cidade de referência mais
 próxima (`nearest_city`). Os estabelecimentos do domínio ficam a ~5 km do
 centro da sua cidade e as cidades de referência estão a dezenas de km umas
 das outras, então a inferência coincide com `Merchant.city`.
+
+Canal: sem `channel`, a transação é presencial com senha — o caso que não
+acende nenhum sinal de canal sozinho. Compra online não tem forma de
+pagamento presencial (`payment_method` é ignorado).
 """
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
@@ -32,14 +37,17 @@ from sqlalchemy.orm import Session
 from src.risk.engine import RiskEngine, RiskResult
 from src.synthetic.features import (
     amount_deviation,
+    channel_rarity,
     implied_travel_speed,
+    is_contactless,
+    is_online,
     location_distance,
     new_city_flag,
     new_device_flag,
     unusual_hour,
 )
 from src.synthetic.geo_reference import CITIES, distance_km
-from src.synthetic.models import Customer, Device, Merchant, Transaction
+from src.synthetic.models import Channel, Customer, Device, Merchant, PaymentMethod, Transaction
 
 
 def nearest_city(lat: float, lon: float) -> str:
@@ -57,6 +65,8 @@ def compute_transaction_features(
     timestamp: datetime,
     device_id: int | None,
     city: str | None = None,
+    channel: str = Channel.PRESENCIAL.value,
+    payment_method: str | None = PaymentMethod.SENHA.value,
 ) -> dict[str, Any]:
     """Features de risco (as chaves de `src.risk.dataset.RISK_FEATURES`) de
     uma transação nova, a partir do histórico do cliente no banco.
@@ -84,7 +94,12 @@ def compute_transaction_features(
     previous = history[-1] if history else None
     seen_devices = {t.device_id for t in history}
     seen_cities = {c for _, c in rows}
+    seen_channels = Counter(t.channel for t in history)
     city = city or nearest_city(lat, lon)
+    if channel not in {c.value for c in Channel}:
+        raise ValueError(f"canal desconhecido: {channel!r}")
+    if channel == Channel.ONLINE.value:
+        payment_method = None
 
     km = distance_km(customer.home_lat, customer.home_lon, lat, lon)
     tx = SimpleNamespace(
@@ -94,6 +109,8 @@ def compute_transaction_features(
         device_id=device_id,
         lat=lat,
         lon=lon,
+        channel=channel,
+        payment_method=payment_method,
     )
     travel = implied_travel_speed(tx, previous)
 
@@ -109,6 +126,9 @@ def compute_transaction_features(
         # mesma convenção de build_feature_table: sem transação anterior, 0.0
         "implied_speed_kmh": 0.0 if travel.speed_kmh is None else travel.speed_kmh,
         "is_impossible_travel": travel.is_impossible_travel,
+        "is_online": is_online(tx),
+        "is_contactless": is_contactless(tx),
+        "channel_rarity": channel_rarity(channel, seen_channels),
         "distance_from_home_km": km,
         "device_untrusted": not trusted,
         "merchant_city": city,
@@ -126,6 +146,8 @@ def score_new_transaction(
     timestamp: datetime,
     device_id: int | None,
     city: str | None = None,
+    channel: str = Channel.PRESENCIAL.value,
+    payment_method: str | None = PaymentMethod.SENHA.value,
 ) -> RiskResult:
     """Calcula as features da transação nova e devolve a avaliação do engine."""
     features = compute_transaction_features(
@@ -137,5 +159,7 @@ def score_new_transaction(
         timestamp=timestamp,
         device_id=device_id,
         city=city,
+        channel=channel,
+        payment_method=payment_method,
     )
     return engine.assess(features)

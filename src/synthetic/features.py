@@ -18,10 +18,11 @@ a partir do banco.
 from __future__ import annotations
 
 import math
-from typing import Any, Collection, NamedTuple
+from typing import Any, Collection, Mapping, NamedTuple
 
 from src.synthetic.generator import MAX_PLAUSIBLE_SPEED_KMH
 from src.synthetic.geo_reference import distance_km
+from src.synthetic.models import Channel, PaymentMethod
 
 # Meia circunferência da Terra (~20.015 km): maior distância possível entre
 # dois pontos. Referência FIXA (não min-max do dataset), para que
@@ -167,3 +168,31 @@ def implied_travel_speed(transaction: Any, previous_transaction: Any | None) -> 
     )
     speed = km / max(delta_hours, MIN_TIME_DELTA_HOURS)
     return TravelSpeed(speed_kmh=speed, is_impossible_travel=speed > MAX_PLAUSIBLE_SPEED_KMH)
+
+
+def is_online(transaction: Any) -> bool:
+    """True se a compra foi feita online (cartão não presente)."""
+    return transaction.channel == Channel.ONLINE.value
+
+
+def is_contactless(transaction: Any) -> bool:
+    """True se a compra presencial foi paga por aproximação (sem senha).
+    Online é sempre False: não há forma de pagamento presencial.
+    """
+    return transaction.payment_method == PaymentMethod.APROXIMACAO.value
+
+
+def channel_rarity(channel: str, seen_channels: Mapping[str, int]) -> float:
+    """Quão raro é o canal da transação no histórico ANTERIOR do cliente,
+    em [0, 1]: `1 - (compras anteriores neste canal / compras anteriores)`.
+
+    0.0 = o cliente sempre comprou por este canal; 0.9 = só 10% das compras
+    anteriores foram por ele; 1.0 = nunca. `seen_channels` conta as
+    transações estritamente anteriores, por canal (quem monta a tabela
+    mantém a contagem em ordem cronológica — sem olhar o futuro). Sem
+    histórico devolve 0.0, como `new_device_flag`: sem passado não há hábito.
+    """
+    total = sum(seen_channels.values())
+    if total == 0:
+        return 0.0
+    return 1.0 - seen_channels.get(channel, 0) / total

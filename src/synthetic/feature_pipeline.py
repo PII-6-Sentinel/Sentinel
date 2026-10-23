@@ -2,11 +2,13 @@
 
 Só orquestração: lê as transações do banco, percorre cada cliente em ordem
 cronológica mantendo o "estado" que as features precisam (transação
-anterior, dispositivos já vistos) e chama as funções puras de
+anterior, dispositivos, cidades e canais já vistos) e chama as funções puras de
 `src/synthetic/features.py`. Nenhuma lógica de risco aqui.
 """
 
 from __future__ import annotations
+
+from collections import Counter
 
 import pandas as pd
 from sqlalchemy import select
@@ -14,7 +16,10 @@ from sqlalchemy.orm import Session
 
 from src.synthetic.features import (
     amount_deviation,
+    channel_rarity,
     implied_travel_speed,
+    is_contactless,
+    is_online,
     location_distance,
     new_city_flag,
     new_device_flag,
@@ -30,6 +35,9 @@ FEATURE_COLUMNS = [
     "new_city",
     "implied_speed_kmh",
     "is_impossible_travel",
+    "is_online",
+    "is_contactless",
+    "channel_rarity",
 ]
 TABLE_COLUMNS = ["transaction_id", *FEATURE_COLUMNS, "is_fraud", "fraud_scenario"]
 
@@ -59,6 +67,7 @@ def build_feature_table(session: Session) -> pd.DataFrame:
     previous: dict[int, Transaction] = {}
     seen_devices: dict[int, set[int]] = {}
     seen_cities: dict[int, set[str]] = {}
+    seen_channels: dict[int, Counter] = {}
     rows = []
 
     for tx in transactions:
@@ -66,6 +75,7 @@ def build_feature_table(session: Session) -> pd.DataFrame:
         customer = customers[cid]
         devices = seen_devices.setdefault(cid, set())
         cities = seen_cities.setdefault(cid, set())
+        channels = seen_channels.setdefault(cid, Counter())
         city = merchant_city[tx.merchant_id]
         travel = implied_travel_speed(tx, previous.get(cid))
 
@@ -79,6 +89,9 @@ def build_feature_table(session: Session) -> pd.DataFrame:
                 "new_city": new_city_flag(city, customer, cities),
                 "implied_speed_kmh": 0.0 if travel.speed_kmh is None else travel.speed_kmh,
                 "is_impossible_travel": travel.is_impossible_travel,
+                "is_online": is_online(tx),
+                "is_contactless": is_contactless(tx),
+                "channel_rarity": channel_rarity(tx.channel, channels),
                 "is_fraud": tx.is_fraud,
                 "fraud_scenario": tx.fraud_scenario,
             }
@@ -86,6 +99,7 @@ def build_feature_table(session: Session) -> pd.DataFrame:
 
         devices.add(tx.device_id)
         cities.add(city)
+        channels[tx.channel] += 1
         previous[cid] = tx
 
     return pd.DataFrame(rows, columns=TABLE_COLUMNS)
