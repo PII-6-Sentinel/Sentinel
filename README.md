@@ -445,6 +445,10 @@ Para gerar (ou regenerar) o banco:
 python scripts/generate_mock_data.py
 ```
 
+> **Banco antigo:** a Etapa 12 acrescentou canal e forma de pagamento às
+> transações. Um `sentinel.db` gerado antes disso não tem essas colunas —
+> regenere com `python scripts/generate_mock_data.py --force`.
+
 Cria `data/synthetic/sentinel.db` com ~130 clientes e alguns milhares de
 transações (~3% marcadas como fraude, com o cenário que a justifica). Seed
 fixa (`--seed`, default 42) — rodar de novo produz exatamente o mesmo

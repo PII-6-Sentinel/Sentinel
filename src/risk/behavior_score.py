@@ -29,6 +29,14 @@ Justificativa dos pesos (pontos máximos de cada regra)
   sobe (35 no total), aproximando-se de uma viagem impossível.
 - Horário (até 15): o sinal mais fraco — horários habituais são uma
   estimativa difusa e qualquer pessoa compra fora deles de vez em quando.
+- Canal raro (até 15): compra online de quem quase só compra presencial
+  (ou o contrário). É a marca do golpe com dados do cartão, mas qualquer
+  cliente às vezes muda de hábito — vale o mesmo que o horário, outro
+  hábito difuso.
+- Aproximação acima da média (10): aproximação dispensa a senha — o que
+  um fraudador com o cartão físico precisa. Sozinha não diz nada (é como
+  muita gente paga), então só pesa quando o valor também destoa da média
+  do cliente, e pouco: menos que qualquer sinal de "primeira vez".
 
 Os pesos foram escolhidos por esse raciocínio de domínio, NÃO ajustados aos
 dados sintéticos — ajustá-los aos dados repetiria a circularidade dos
@@ -80,6 +88,17 @@ class BehaviorConfig:
     # Dispositivo.
     new_device_points: float = 20.0
     untrusted_device_points: float = 15.0
+
+    # Canal raro: `channel_rarity` (1 - fração das compras anteriores no
+    # mesmo canal). 0,7 = canal usado em no máximo 30% das compras.
+    channel_rarity_start: float = 0.7
+    channel_rarity_full: float = 1.0
+    channel_base_points: float = 5.0
+    channel_max_points: float = 15.0
+
+    # Aproximação (sem senha) com valor a partir de 1,5x a média do cliente.
+    contactless_min_ratio: float = 1.5
+    contactless_points: float = 10.0
 
     # Viagem impossível (velocidade implícita > 900 km/h, ver features.py).
     impossible_travel_points: float = 40.0
@@ -188,6 +207,27 @@ def rule_impossible_travel(f: Mapping[str, Any], c: BehaviorConfig) -> RuleHit |
     )
 
 
+def rule_channel(f: Mapping[str, Any], c: BehaviorConfig) -> RuleHit | None:
+    rarity = float(f["channel_rarity"])
+    points = ramp(rarity, c.channel_rarity_start, c.channel_rarity_full, c.channel_base_points, c.channel_max_points)
+    if points == 0:
+        return None
+    channel = "online" if bool(f["is_online"]) else "presencial"
+    share = round((1.0 - rarity) * 100)
+    return RuleHit("canal_raro", points, f"Compra {channel}, canal raro para o cliente ({share}% das compras anteriores)")
+
+
+def rule_contactless(f: Mapping[str, Any], c: BehaviorConfig) -> RuleHit | None:
+    ratio = float(f["amount_deviation"]) + 1.0
+    if not bool(f["is_contactless"]) or ratio < c.contactless_min_ratio:
+        return None
+    return RuleHit(
+        "aproximacao",
+        c.contactless_points,
+        f"Pagamento por aproximação, sem senha, {_fmt_dec(ratio)}x a média do cliente",
+    )
+
+
 RULES: tuple[Callable[[Mapping[str, Any], BehaviorConfig], RuleHit | None], ...] = (
     rule_impossible_travel,
     rule_location,
@@ -196,6 +236,8 @@ RULES: tuple[Callable[[Mapping[str, Any], BehaviorConfig], RuleHit | None], ...]
     rule_new_device,
     rule_untrusted_device,
     rule_hour,
+    rule_channel,
+    rule_contactless,
 )
 
 

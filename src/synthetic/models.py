@@ -53,6 +53,24 @@ class DeviceType(str, enum.Enum):
     POS = "pos"
 
 
+class Channel(str, enum.Enum):
+    """Onde a compra acontece: na internet (cartão não presente) ou num
+    estabelecimento físico (cartão presente).
+    """
+
+    ONLINE = "online"
+    PRESENCIAL = "presencial"
+
+
+class PaymentMethod(str, enum.Enum):
+    """Como o cartão foi usado numa compra PRESENCIAL. Compras online não
+    têm forma de pagamento presencial (o campo fica None).
+    """
+
+    APROXIMACAO = "aproximacao"  # contactless, sem senha
+    SENHA = "senha"  # chip + senha
+
+
 class FraudScenario(str, enum.Enum):
     """Os 6 cenários de fraude injetados pelo gerador — ver
     docs/DOMINIO_SINTETICO.md para a descrição de cada um.
@@ -80,6 +98,10 @@ class Customer(Base):
     avg_amount_baseline: Mapped[float] = mapped_column(Float)
     typical_hour_start: Mapped[int] = mapped_column(Integer)
     typical_hour_end: Mapped[int] = mapped_column(Integer)
+    # Hábito de canal: fração das compras normais feitas online, e fração
+    # das presenciais pagas por aproximação (ver generator.assign_channels).
+    online_share: Mapped[float] = mapped_column(Float, default=0.0)
+    contactless_share: Mapped[float] = mapped_column(Float, default=0.0)
 
     cards: Mapped[list["Card"]] = relationship(back_populates="customer")
     devices: Mapped[list["Device"]] = relationship(back_populates="customer")
@@ -136,6 +158,10 @@ class Transaction(Base):
     lat: Mapped[float] = mapped_column(Float)
     lon: Mapped[float] = mapped_column(Float)
     distance_from_home_km: Mapped[float] = mapped_column(Float)
+    # String (não Enum), como fraud_scenario: guarda o .value de Channel e
+    # de PaymentMethod; payment_method é None nas compras online.
+    channel: Mapped[str] = mapped_column(String(20), default=Channel.PRESENCIAL.value)
+    payment_method: Mapped[str | None] = mapped_column(String(20), nullable=True)
     is_fraud: Mapped[bool] = mapped_column(Boolean, default=False)
     # String (não Enum) de propósito: nullable, guarda o .value de
     # FraudScenario para transações fraudulentas, e None para normais.

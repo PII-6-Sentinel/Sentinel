@@ -43,6 +43,9 @@ def normal_features(**overrides):
         "device_untrusted": False,
         "implied_speed_kmh": 3.0,
         "is_impossible_travel": False,
+        "is_online": False,  # presencial, com senha, canal habitual
+        "is_contactless": False,
+        "channel_rarity": 0.0,
     }
     base.update(overrides)
     return base

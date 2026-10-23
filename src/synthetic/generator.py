@@ -33,11 +33,13 @@ from src.synthetic.models import (
     Card,
     CardStatus,
     CardType,
+    Channel,
     Customer,
     Device,
     DeviceType,
     FraudScenario,
     Merchant,
+    PaymentMethod,
     Transaction,
 )
 
@@ -640,6 +642,76 @@ def _target_fraud_counts(total_normal: int) -> dict[FraudScenario, int]:
 
 
 # ---------------------------------------------------------------------------
+# Canal (online / presencial) e forma de pagamento (aproximação / senha)
+# ---------------------------------------------------------------------------
+
+# Limite de compra por aproximação sem senha (como o das bandeiras no
+# Brasil): acima dele, a compra presencial exige senha.
+CONTACTLESS_LIMIT_BRL = 200.0
+
+# Fração das compras normais feitas online, por perfil: quem compra pouco
+# online tem um hábito de canal bem marcado — e uma compra online vira sinal.
+ONLINE_SHARE_RANGE: dict[BehaviorProfile, tuple[float, float]] = {
+    BehaviorProfile.FIXO: (0.05, 0.30),
+    BehaviorProfile.VIAJANTE: (0.20, 0.50),
+    BehaviorProfile.ALTO_GASTO: (0.30, 0.60),
+    BehaviorProfile.NOVO_CLIENTE: (0.10, 0.60),
+}
+# Fração das compras presenciais (até o limite) pagas por aproximação.
+CONTACTLESS_SHARE_RANGE = (0.40, 0.90)
+
+# Fraude: na maioria dos golpes o fraudador tem o cartão (ou só os dados
+# dele) mas NÃO a senha — então compra online, ou presencialmente por
+# aproximação até o limite. Uma parte é cartão clonado com a senha
+# capturada (chupa-cabra, golpe da maquininha): compra presencial com
+# senha, indistinguível do titular pelo canal. Dispositivo novo é uma
+# compra por aplicativo/site: sempre online.
+FRAUD_PIN_KNOWN_PROB = 0.25
+FRAUD_ONLINE_PROB = 0.5
+
+# Semente própria (derivada da principal): sortear o canal DEPOIS de gerar
+# tudo, com outro gerador, mantém idênticas as transações das etapas
+# anteriores (mesmos valores, locais e horários) para a mesma `seed`.
+CHANNEL_SEED_OFFSET = 1_000
+
+
+def assign_channels(dataset: GeneratedDataset, seed: int = DEFAULT_SEED) -> None:
+    """Define o hábito de canal de cada cliente e o canal/forma de
+    pagamento de cada transação (in-place, determinístico).
+
+    Normais seguem o hábito do cliente; acima de `CONTACTLESS_LIMIT_BRL` a
+    compra presencial é sempre com senha. Fraudes seguem a lógica do golpe
+    (ver `FRAUD_PIN_KNOWN_PROB` e `FRAUD_ONLINE_PROB`). O rótulo é usado aqui só
+    para GERAR os dados — nunca chega às features.
+    """
+    rng = random.Random(seed + CHANNEL_SEED_OFFSET)
+    for customer in dataset.customers:
+        low, high = ONLINE_SHARE_RANGE[customer.behavior_profile]
+        customer.online_share = round(rng.uniform(low, high), 3)
+        customer.contactless_share = round(rng.uniform(*CONTACTLESS_SHARE_RANGE), 3)
+
+    for tx in dataset.transactions:
+        customer = tx.customer
+        if tx.is_fraud and tx.fraud_scenario == FraudScenario.DISPOSITIVO_NOVO.value:
+            online, contactless = True, False
+        elif tx.is_fraud and rng.random() < FRAUD_PIN_KNOWN_PROB:
+            online, contactless = False, False
+        elif tx.is_fraud:
+            online = tx.amount > CONTACTLESS_LIMIT_BRL or rng.random() < FRAUD_ONLINE_PROB
+            contactless = not online
+        else:
+            online = rng.random() < customer.online_share
+            contactless = (
+                not online and tx.amount <= CONTACTLESS_LIMIT_BRL and rng.random() < customer.contactless_share
+            )
+        if online:
+            tx.channel, tx.payment_method = Channel.ONLINE.value, None
+        else:
+            method = PaymentMethod.APROXIMACAO if contactless else PaymentMethod.SENHA
+            tx.channel, tx.payment_method = Channel.PRESENCIAL.value, method.value
+
+
+# ---------------------------------------------------------------------------
 # Orquestração
 # ---------------------------------------------------------------------------
 
@@ -682,13 +754,15 @@ def generate_dataset(
     for bundle in bundles:
         bundle.transactions.sort(key=lambda t: t.timestamp)
 
-    return GeneratedDataset(
+    dataset = GeneratedDataset(
         customers=[b.customer for b in bundles],
         cards=[c for b in bundles for c in b.cards],
         devices=[d for b in bundles for d in [*b.devices, *b.extra_devices]],
         merchants=merchants,
         transactions=[t for b in bundles for t in b.transactions],
     )
+    assign_channels(dataset, seed)
+    return dataset
 
 
 def summarize(dataset: GeneratedDataset) -> dict:
@@ -727,6 +801,8 @@ def summarize(dataset: GeneratedDataset) -> dict:
         "n_fraud": len(fraud_txs),
         "fraud_rate": (len(fraud_txs) / total) if total else 0.0,
         "fraud_by_scenario": dict(fraud_by_scenario),
+        "channel_counts": dict(Counter(t.channel for t in dataset.transactions)),
+        "fraud_channel_counts": dict(Counter(t.channel for t in fraud_txs)),
         "example_frauds": examples,
     }
 

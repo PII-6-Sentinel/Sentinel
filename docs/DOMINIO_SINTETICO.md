@@ -139,6 +139,15 @@ outra transação o usa — então, em ordem cronológica, esta é a primeira e
 para viajantes, coerentes com a cidade onde o cliente está naquele dia): só
 o dispositivo destoa.
 
+## Canal e forma de pagamento (Etapa 12)
+
+Toda transação é `online` ou `presencial`; a presencial é paga por
+`aproximacao` (sem senha, até R$ 200) ou com `senha`. Cada cliente tem um
+hábito de canal, e as compras normais o seguem. As fraudes seguem a lógica
+de quem não tem a senha (online ou por aproximação), exceto 25% de cartões
+clonados com a senha capturada. Detalhes e resultados em
+`docs/RISK_ENGINE.md`, seção 6.1.
+
 ## Como o itinerário do viajante evita "teletransporte"
 
 Na primeira versão do gerador, a cidade de cada transação normal de um

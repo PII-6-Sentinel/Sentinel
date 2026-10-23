@@ -36,6 +36,8 @@ def _raw(tx):
         lon=tx.lon,
         timestamp=tx.timestamp,
         device_id=tx.device_id,
+        channel=tx.channel,
+        payment_method=tx.payment_method,
     )
 
 
