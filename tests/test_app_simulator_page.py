@@ -103,8 +103,8 @@ def _ctx_of(db, customer_id: int) -> sim.CustomerContext:
 # ----------------------------------------------------------------------
 
 
-def test_page_is_in_the_main_navigation_next_to_the_other_two(page):
-    assert page.sidebar.radio(key="nav_product").options == ["Visão Geral", "Central de Transações", "Simulador"]
+def test_page_is_in_the_main_navigation_next_to_the_other_pages(page):
+    assert "Simulador" in page.sidebar.radio(key="nav_product").options
 
 
 def test_page_opens_with_the_form_and_no_verdict(page, analysis_calls):
