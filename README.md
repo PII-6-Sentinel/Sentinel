@@ -132,11 +132,12 @@ pip install -r requirements.txt
 | `pandas` / `numpy` | Manipulação dos dados tabulares |
 | `scikit-learn` | Modelos de ML, split treino/teste, métricas (matriz de confusão, AUC-ROC, F1) |
 | `imbalanced-learn` | Técnicas de balanceamento de classes (SMOTE, undersampling) — essencial dado o desbalanceamento de ~0,17% |
-| `matplotlib` / `seaborn` | Visualização na análise exploratória |
+| `matplotlib` / `seaborn` | Visualização no notebook de análise exploratória |
 | `jupyter` / `notebook` | Ambiente dos notebooks |
 | `kaggle` | Download automatizado do dataset via API (opcional, ver seção 3) |
 | `streamlit` | Aplicação interativa de apresentação (ver seção 5) |
 | `plotly` | Gráficos interativos usados na aplicação |
+| `sqlalchemy` / `geopy` | Banco SQLite do domínio sintético e distâncias geográficas |
 
 ## 3. Obtendo o dataset
 

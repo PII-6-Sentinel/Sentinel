@@ -76,10 +76,23 @@ def page(monkeypatch, synthetic_db_file, analysis_calls) -> AppTest:
 
 @pytest.fixture
 def analyzed(page) -> AppTest:
-    """A mesma página, depois do clique em "Executar análise de risco"."""
+    """A mesma página, depois do clique em "Executar análise de risco", com o
+    filtro "Conjunto" limpo (todas as linhas) — o padrão "teste" tem teste próprio.
+    """
     _button(page, RUN_LABEL).click().run()
     assert not page.exception
+    page.multiselect(key="tx_f_split").set_value([]).run()
     return page
+
+
+def test_conjunto_filter_opens_on_the_test_customers(page):
+    """Padrão = teste: a tabela abre só com clientes que o modelo nunca viu."""
+    _button(page, RUN_LABEL).click().run()
+    assert page.multiselect(key="tx_f_split").value == ["teste"]
+    frame = page.session_state["risk_analysis"].frame
+    table = page.dataframe[0].value
+    assert len(table) == (frame["conjunto"] == "teste").sum() < len(frame)
+    assert set(table["Conjunto"]) == {"teste"}
 
 
 def _table(at: AppTest):

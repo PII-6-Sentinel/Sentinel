@@ -491,9 +491,9 @@ def render():
             help="Sequência fixa de transações: com os mesmos controles, a demonstração sai sempre igual. "
             "Ligar ou desligar recomeça o fluxo.",
         )
-        if c3.button("Gerar 10 agora", key="live_burst", disabled=running, use_container_width=True):
+        if c3.button("Gerar 10 agora", key="live_burst", disabled=running, width="stretch"):
             _generate(10)
-        c4.button("Limpar fluxo", key="live_clear", on_click=_clear, use_container_width=True)
+        c4.button("Limpar fluxo", key="live_clear", on_click=_clear, width="stretch")
         s1, s2 = st.columns(2)
         interval = s1.select_slider(
             "Intervalo entre transações", options=[0.5, 1.0, 2.0, 3.0, 5.0], value=2.0, key=K_INTERVAL,

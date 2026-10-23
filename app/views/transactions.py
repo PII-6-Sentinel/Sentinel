@@ -218,12 +218,17 @@ def _render_filters(result: AnalysisResult):
         profiles = c3.multiselect("Perfil do cliente", sorted(frame["profile"].unique()), key="tx_f_profile", placeholder="Todos")
         c4, c5, c6 = st.columns(3)
         picked = c4.multiselect("Cliente", list(labels), format_func=labels.get, key="tx_f_customer", placeholder="Todos")
+        # padrão = teste: os scores dos clientes de treino são "dentro da
+        # amostra" (o modelo aprendeu com eles), então abrir a tabela neles
+        # mostraria um desempenho melhor que o real. Quem quiser, inclui os outros.
+        st.session_state.setdefault("tx_f_split", [SPLIT_TEST])
         splits = c5.multiselect(
             "Conjunto",
             [SPLIT_TEST, SPLIT_VALIDATION, SPLIT_TRAIN],
             key="tx_f_split",
             placeholder="Todos",
-            help="Clientes de teste nunca foram vistos pelo modelo; só eles entram na medição de eficiência.",
+            help="Abre em \"teste\": clientes que o modelo nunca viu, os únicos que entram na medição de eficiência. "
+            "Limpe o filtro para ver todos.",
         )
         amount = c6.slider("Faixa de valor (R$)", lo, hi, (lo, hi), step=1.0, key="tx_f_amount")
 
