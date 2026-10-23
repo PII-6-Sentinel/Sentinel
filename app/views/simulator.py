@@ -456,7 +456,9 @@ def _render(session: Session) -> None:
                 )
         _active_chip_style()
 
-        f1, f2, f3, f4, f5, f6 = st.columns([1, 1.2, 1, 1, 1.8, 1.4])
+        # duas linhas de três: seis campos numa linha cortavam o texto dos seletores
+        f1, f2, f3 = st.columns([1, 1.2, 1])
+        f4, f5, f6 = st.columns([1, 1.8, 1.4])
         amount = f1.number_input("Valor (R$)", min_value=0.01, step=1.0, format="%.2f", key=K_AMOUNT)
         city = f2.selectbox("Cidade da compra", CITY_NAMES, key=K_CITY)
         day = f3.date_input(
