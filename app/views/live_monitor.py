@@ -135,11 +135,14 @@ def _generate(n: int = 1) -> None:
         sa_engine.dispose()
     flagged = [e for e in events[start:] if e.flagged]
     for e in flagged[-MAX_TOASTS:]:
-        mark = "acertou" if e.correct else "alarme falso"
+        mark = "" if e.correct else " · alarme falso"
+        # curto de propósito: com 3 linhas ou mais o Streamlit corta o texto e
+        # mostra um "view more" que não acrescenta nada (o detalhe está no feed)
         st.toast(
-            f"**{VERDICT_FRAUD}:** #{e.seq} · {e.customer_name} · {fmt_brl(e.amount)} em {e.city} "
-            f"— {ACTION_LABEL[e.assessment.action].lower()} ({mark})".replace("$", "\\$"),
+            f"**#{e.seq} {VERDICT_FRAUD.lower()}** · {ACTION_LABEL[e.assessment.action].lower()} · "
+            f"{fmt_brl(e.amount)}{mark}".replace("$", "\\$"),
             icon=":material/gpp_bad:",
+            duration="long",
         )
     del events[:-MAX_EVENTS]
 

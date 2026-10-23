@@ -242,4 +242,6 @@ def test_fraudulent_verdicts_raise_an_alert(page):
     flagged = [e for e in page.session_state["live_events"] if e.flagged]
     toasts = [t.value for t in page.toast]
     assert len(toasts) == min(len(flagged), 3)
-    assert all("Fraudulenta" in t for t in toasts)
+    assert all("fraudulenta" in t for t in toasts)
+    # curto: com 3 linhas o Streamlit mostra um "view more" que não acrescenta nada
+    assert all(len(t) <= 80 for t in toasts)
