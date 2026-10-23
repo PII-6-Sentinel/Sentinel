@@ -5,11 +5,18 @@ tem o produto: a seção científica (Kaggle) saiu do app na Etapa 13 e vive
 no repositório (`src/`, `notebooks/`).
 """
 
+import sys
 from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
 
-APP = str(Path(__file__).resolve().parent.parent / "app" / "app.py")
+APP_DIR = Path(__file__).resolve().parent.parent / "app"
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
+
+import risk_analysis as ra  # noqa: E402
+
+APP = str(APP_DIR / "app.py")
 SCIENTIFIC_PAGES = ["Análise Exploratória", "Comparação de Modelos", "Análise de Threshold", "Demo (dataset Kaggle)"]
 
 
@@ -116,3 +123,24 @@ def test_overview_lists_every_product_component_as_ready():
     assert state["Simulador ao vivo"] == "Pronto"
     assert "Em construção" not in state.values()
 
+
+
+def test_outdated_database_shows_how_to_fix_it(monkeypatch, tmp_path):
+    """Banco de antes da Etapa 12 (sem as colunas de canal): as páginas que
+    usam o banco explicam como regenerar, em vez de quebrar com erro de SQL.
+    """
+    import sqlite3
+
+    path = tmp_path / "antigo.db"
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT)")
+        conn.execute("CREATE TABLE transactions (id INTEGER PRIMARY KEY, amount REAL)")
+    assert ra.database_problem(path) == ra.OUTDATED_DB_MESSAGE
+    assert ra.database_problem(tmp_path / "nao_existe.db") == ra.MISSING_DB_MESSAGE
+
+    monkeypatch.setenv(ra.DB_ENV_VAR, str(path))
+    for page in ("Central de Transações", "Simulador", "Monitor ao Vivo"):
+        at = _run()
+        at.sidebar.radio(key="nav_product").set_value(page).run()
+        assert not at.exception, page
+        assert any("desatualizado" in e.value and "--force" in e.value for e in at.error), page

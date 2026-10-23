@@ -26,12 +26,14 @@ from risk_analysis import (
     AnalysisResult,
     DatabaseNotFound,
     apply_filters,
+    database_problem,
     efficiency,
     investigate,
     resolve_db_path,
     run_analysis,
     summarize,
 )
+from simulator import CHANNEL_OPTIONS
 from theme import LEVEL_COLORS
 from ui import (
     ACTION_LABEL,
@@ -253,6 +255,7 @@ def _render_table(view):
             "Cliente": view["customer"].to_numpy(),
             "Valor": view["amount"].to_numpy(),
             "Cidade": view["city"].to_numpy(),
+            "Canal": [_channel_text(c, p) for c, p in zip(view["channel"], view["payment_method"])],
             "Data/hora": view["timestamp"].to_numpy(),
             "Risk Score": view["risk_score"].to_numpy(),
             "Nível": view["level"].to_numpy(),
@@ -279,6 +282,12 @@ def _render_table(view):
 # ----------------------------------------------------------------------
 # painel de investigação
 # ----------------------------------------------------------------------
+
+
+def _channel_text(channel: str, payment_method) -> str:
+    """'Online', 'Presencial · senha' ou 'Presencial · aproximação' (online não tem forma de pagamento)."""
+    payment = None if channel == "online" or pd.isna(payment_method) else payment_method
+    return CHANNEL_OPTIONS.get((channel, payment), channel)
 
 
 def _device_text(row) -> str:
@@ -351,6 +360,7 @@ def _render_investigation(result: AnalysisResult, transaction_id: int) -> None:
                         ("Local habitual", f"{esc(row['home_city'])} (residência)"),
                         ("Distância da residência", fmt_km(row["distance_from_home_km"])),
                         ("Dispositivo", esc(_device_text(row))),
+                        ("Canal e pagamento", esc(_channel_text(row["channel"], row["payment_method"]))),
                         ("Conjunto", esc(row["conjunto"])),
                     ]
                 ),
@@ -451,12 +461,9 @@ def render():
         f"Atenção: {SIMULATION_NOTICE}."
     )
 
-    if not resolve_db_path().exists():
-        st.error(
-            "**Banco sintético não encontrado.** Gere-o com `python scripts/generate_mock_data.py` "
-            "(é determinístico: seed fixa) e recarregue a página.",
-            icon=":material/database_off:",
-        )
+    problem = database_problem(resolve_db_path())
+    if problem:
+        st.error(problem, icon=":material/database_off:")
         return
 
     run = st.session_state.pop(RUN_FLAG, False)

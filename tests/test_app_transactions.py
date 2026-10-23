@@ -190,7 +190,7 @@ def test_summary_cards_match_the_analysis(analyzed):
 def test_table_is_sorted_by_risk_score_and_has_the_requested_columns(analyzed):
     table = _table(analyzed)
     assert table.columns.tolist() == [
-        "ID", "Cliente", "Valor", "Cidade", "Data/hora", "Risk Score", "Nível", "Ação", "Conjunto",
+        "ID", "Cliente", "Valor", "Cidade", "Canal", "Data/hora", "Risk Score", "Nível", "Ação", "Conjunto",
     ]
     assert len(table) == len(analyzed.session_state["risk_analysis"].frame)
     assert table["Risk Score"].is_monotonic_decreasing
@@ -457,3 +457,9 @@ def test_ptbr_formatting_helpers():
     assert view.fmt_km(2317.4) == "2.317 km"
     assert view.fmt_seconds(0.0642) == "64 ms"
     assert view.fmt_seconds(1.5) == "1,50 s"
+
+
+def test_table_and_record_show_the_channel(analyzed):
+    table = _table(analyzed)
+    assert set(table["Canal"]) <= {"Online", "Presencial · senha", "Presencial · aproximação"}
+    assert len(set(table["Canal"])) == 3

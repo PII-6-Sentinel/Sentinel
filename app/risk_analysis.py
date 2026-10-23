@@ -32,7 +32,7 @@ from typing import Callable
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, inspect, select
 from sqlalchemy.orm import Session
 
 from src.risk.behavior_score import behavior_score
@@ -135,6 +135,40 @@ class AnalysisResult:
         return sum(s.seconds for s in self.steps)
 
 
+# Colunas que cada etapa acrescentou ao banco: um banco gerado antes delas
+# não as tem, e o app quebraria com um erro de SQL sem dizer o que fazer.
+REQUIRED_COLUMNS = {
+    "customers": {"online_share", "contactless_share"},  # Etapa 12
+    "transactions": {"channel", "payment_method"},  # Etapa 12
+}
+MISSING_DB_MESSAGE = (
+    "**Banco sintético não encontrado.** Gere-o com `python scripts/generate_mock_data.py` "
+    "(é determinístico: seed fixa) e recarregue a página."
+)
+OUTDATED_DB_MESSAGE = (
+    "**Banco sintético desatualizado.** Ele foi gerado antes da Etapa 12 (canal e forma de pagamento) e "
+    "não tem as colunas novas. Regenere-o com `python scripts/generate_mock_data.py --force` e recarregue a página."
+)
+
+
+def database_problem(db_path: Path) -> str | None:
+    """Mensagem para a página quando o banco não existe ou está desatualizado;
+    None se estiver tudo certo.
+    """
+    if not db_path.exists():
+        return MISSING_DB_MESSAGE
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        inspector = inspect(engine)
+        for table, columns in REQUIRED_COLUMNS.items():
+            found = {c["name"] for c in inspector.get_columns(table)} if inspector.has_table(table) else set()
+            if not columns <= found:
+                return OUTDATED_DB_MESSAGE
+    finally:
+        engine.dispose()
+    return None
+
+
 class DatabaseNotFound(FileNotFoundError):
     """O banco sintético ainda não foi gerado."""
 
@@ -153,6 +187,8 @@ def _load_transactions(session: Session) -> pd.DataFrame:
             Transaction.amount,
             Transaction.lat.label("tx_lat"),
             Transaction.lon.label("tx_lon"),
+            Transaction.channel,
+            Transaction.payment_method,
             Customer.id.label("customer_id"),
             Customer.name.label("customer"),
             Customer.behavior_profile.label("profile"),

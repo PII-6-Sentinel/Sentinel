@@ -52,6 +52,8 @@ def _form(at: AppTest) -> sim.FormValues:
         amount=at.number_input(key="sim_amount").value,
         timestamp=datetime.combine(at.date_input(key="sim_date").value, at.time_input(key="sim_time").value),
         device_id=at.selectbox(key="sim_device").value,
+        channel=at.selectbox(key="sim_channel").value[0],
+        payment_method=at.selectbox(key="sim_channel").value[1],
     )
 
 

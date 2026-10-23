@@ -297,6 +297,8 @@ def test_verdict_equals_score_new_transaction_for_the_same_input(db, risk_engine
                 timestamp=form.timestamp,
                 device_id=None if form.device_id == sim.NEW_DEVICE else form.device_id,
                 city=form.city,
+                channel=form.channel,
+                payment_method=form.payment_method,
             )
         assert simulated == reference  # RiskResult inteiro: scores, nível, ação, motivos
 
@@ -440,3 +442,24 @@ def test_channel_reaches_the_features_and_the_reasoning(db, risk_engine, custome
     assert result.features["is_online"] is True
     step = next(s for s in result.steps if s.label == "Canal e forma de pagamento")
     assert step.detail.startswith("Online")
+
+
+def test_scenarios_use_a_coherent_channel(db, customer_ids):
+    """Cada cenário usa o canal habitual do cliente (só muda o que promete);
+    com dispositivo novo, online, como no gerador do banco. Aproximação
+    nunca passa do limite sem senha.
+    """
+    from src.synthetic.generator import CONTACTLESS_LIMIT_BRL
+
+    for cid in customer_ids[::7]:
+        ctx = _ctx(db, cid)
+        habitual = sim.habitual_channel(ctx)
+        for key, form in sim.build_scenarios(ctx).items():
+            if form is None:
+                continue
+            if form.device_id == sim.NEW_DEVICE:
+                assert (form.channel, form.payment_method) == ("online", None), key
+            elif form.payment_method == "aproximacao":
+                assert form.amount <= CONTACTLESS_LIMIT_BRL, key
+            elif habitual[1] != "aproximacao" or form.amount <= CONTACTLESS_LIMIT_BRL:
+                assert (form.channel, form.payment_method) == habitual, key
