@@ -150,3 +150,41 @@ def test_clear_button_empties_the_stream(page):
     next(b for b in page.button if b.label == "Limpar fluxo").click().run()
     assert not page.exception
     assert "live_events" not in page.session_state
+
+
+def test_decision_time_is_measured(db, risk_engine):
+    events = _stream(db, risk_engine, 5, 0.5)
+    assert all(e.decision_ms > 0 for e in events)
+    assert lm.summarize(events)["avg_decision_ms"] == pytest.approx(sum(e.decision_ms for e in events) / 5)
+
+
+def test_presentation_seed_repeats_the_same_stream(db, risk_engine):
+    def picks():
+        return [(e.customer_id, e.scenario, e.amount, e.timestamp) for e in _stream(db, risk_engine, 15, 0.4, lm.PRESENTATION_SEED)]
+
+    assert picks() == picks()
+
+
+def _burst(at: AppTest) -> AppTest:
+    return next(b for b in at.button if b.label == "Gerar 10 agora").click().run()
+
+
+def _sequence(at: AppTest) -> list:
+    return [(e.customer_id, e.scenario) for e in at.session_state["live_events"]]
+
+
+def test_presentation_mode_restarts_the_same_sequence(page):
+    page.toggle(key="live_presentation").set_value(True).run()
+    first = _sequence(_burst(page))
+    next(b for b in page.button if b.label == "Limpar fluxo").click().run()
+    assert _sequence(_burst(page)) == first
+    assert not page.exception
+
+
+def test_blocked_transactions_raise_an_alert(page):
+    page.slider(key="live_fraud_rate").set_value(100).run()
+    _burst(page)
+    blocked = [e for e in page.session_state["live_events"] if e.assessment.action == "bloquear"]
+    toasts = [t.value for t in page.toast]
+    assert len(toasts) == min(len(blocked), 3)
+    assert all("Bloqueada" in t for t in toasts)

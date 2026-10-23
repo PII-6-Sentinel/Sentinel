@@ -23,6 +23,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from live_monitor import (
     MAX_EVENTS,
+    PRESENTATION_SEED,
     LiveEvent,
     customer_ids,
     events_frame,
@@ -64,7 +65,7 @@ from ui import (
     style_levels,
 )
 
-from src.risk.engine import ACTION_DESCRIPTION
+from src.risk.engine import ACTION_BLOCK, ACTION_DESCRIPTION
 
 CENTRAL_KEY = "risk_analysis"  # resultado da Central de Transações (ver views/transactions.py)
 ENGINE_KEY = "sim_engine"  # mesmo formato do Simulador: {"engine", "note"}
@@ -72,6 +73,8 @@ EVENTS_KEY = "live_events"
 SEQ_KEY = "live_seq"
 RNG_KEY = "live_rng"
 K_RUNNING, K_INTERVAL, K_FRAUD = "live_running", "live_interval", "live_fraud_rate"
+K_PRESENTATION = "live_presentation"
+MAX_TOASTS = 3  # alertas de bloqueio por rodada (o "Gerar 10" não vira uma enxurrada)
 
 SIMULATION_NOTICE = (
     "fluxo de transações simuladas a partir do banco sintético; a coluna Cenário é o rótulo da simulação, "
@@ -107,8 +110,12 @@ def _engine():
 def _generate(n: int = 1) -> None:
     """Gera e avalia `n` transações novas e as acrescenta ao fluxo."""
     engine = _engine()
-    rng = st.session_state.setdefault(RNG_KEY, random.Random())
+    if RNG_KEY not in st.session_state:
+        presentation = st.session_state.get(K_PRESENTATION, False)
+        st.session_state[RNG_KEY] = random.Random(PRESENTATION_SEED if presentation else None)
+    rng = st.session_state[RNG_KEY]
     events: list[LiveEvent] = st.session_state.setdefault(EVENTS_KEY, [])
+    start = len(events)
     fraud_rate = st.session_state.get(K_FRAUD, 20) / 100
     sa_engine = create_engine(f"sqlite:///{resolve_db_path()}")
     try:
@@ -120,11 +127,21 @@ def _generate(n: int = 1) -> None:
                 events.append(next_event(session, engine, rng, seq, fraud_rate, ids))
     finally:
         sa_engine.dispose()
+    blocked = [e for e in events[start:] if e.assessment.action == ACTION_BLOCK]
+    for e in blocked[-MAX_TOASTS:]:
+        st.toast(
+            f"**Bloqueada:** #{e.seq} · {e.customer_name} · {fmt_brl(e.amount)} em {e.city} "
+            f"(Risk Score {e.assessment.risk_score})".replace("$", "\\$"),
+            icon=":material/block:",
+        )
     del events[:-MAX_EVENTS]
 
 
 def _clear() -> None:
-    for key in (EVENTS_KEY, SEQ_KEY):
+    """Zera o fluxo. O sorteio recomeça: no modo apresentação, do início da
+    mesma sequência.
+    """
+    for key in (EVENTS_KEY, SEQ_KEY, RNG_KEY):
         st.session_state.pop(key, None)
 
 
@@ -133,11 +150,21 @@ def _clear() -> None:
 # ----------------------------------------------------------------------
 
 
+def _fmt_ms(ms: float) -> str:
+    return f"{ms:.0f} ms" if ms >= 10 else f"{ms:.1f} ms".replace(".", ",")
+
+
 def _kpis(s: dict) -> None:
     detection = "—" if s["detection_rate"] is None else fmt_pct(s["detection_rate"], 0)
     false_alarm = "—" if s["false_alarm_rate"] is None else fmt_pct(s["false_alarm_rate"], 0)
     items = [
-        card("Transações", fmt_int(s["total"]), f"{fmt_brl(s['amount_total'])} no total", size="xs", dot=False),
+        card(
+            "Transações",
+            fmt_int(s["total"]),
+            f"{fmt_brl(s['amount_total'])} no total · decisão em {_fmt_ms(s['avg_decision_ms'])} em média",
+            size="xs",
+            dot=False,
+        ),
         card("Aprovadas", fmt_int(s["approved"]), "nível baixo", LEVEL_COLORS["baixo"], size="xs"),
         card("Em revisão", fmt_int(s["review"]), "nível médio", LEVEL_COLORS["médio"], size="xs"),
         card("Bloqueadas", fmt_int(s["blocked"]), "nível alto", LEVEL_COLORS["alto"], size="xs"),
@@ -182,7 +209,8 @@ def _latest(e: LiveEvent) -> None:
                 + f'<div style="margin-top:16px">{level_badge(a.level)}</div>'
                 + f'<div style="margin-top:12px;font-size:28px;font-weight:700;color:{color}">{ACTION_LABEL[a.action]}</div>'
                 + f'<div style="color:{TEXT_SECONDARY};font-size:13px">{esc(ACTION_DESCRIPTION[a.action])}</div>'
-                + f'<div style="color:{TEXT_SECONDARY};font-size:13px;margin-top:8px">ML {a.ml_score:.0f} · regras {a.behavior_score:.0f}</div>',
+                + f'<div style="color:{TEXT_SECONDARY};font-size:13px;margin-top:8px">ML {a.ml_score:.0f} · regras {a.behavior_score:.0f}</div>'
+                + f'<div style="color:{TEXT_SECONDARY};font-size:13px">decidido em {_fmt_ms(e.decision_ms)}</div>',
             ),
             unsafe_allow_html=True,
         )
@@ -311,6 +339,7 @@ def _feed(frame) -> None:
             "Data/hora": lambda t: t.strftime("%d/%m/%Y %H:%M"),
             "Valor": fmt_brl,
             "Distância (km)": lambda v: fmt_int(v),
+            "Decisão (ms)": _fmt_ms,
         }
     ).apply(style_levels, axis=None)
     st.dataframe(styled, hide_index=True, key="live_feed")
@@ -373,17 +402,26 @@ def render():
         )
         return
 
+    # duas linhas: em telas estreitas (projetor) cinco colunas cortavam os botões
     with st.container(key="live-controls"):
-        c1, c2, c3, c4, c5 = st.columns([1.1, 1.4, 1.4, 1, 1], vertical_alignment="bottom")
+        c1, c2, c3, c4 = st.columns(4, vertical_alignment="center")
         running = c1.toggle("Transmitir ao vivo", key=K_RUNNING)
-        interval = c2.select_slider(
+        c2.toggle(
+            "Modo apresentação",
+            key=K_PRESENTATION,
+            on_change=_clear,
+            help="Sequência fixa de transações: com os mesmos controles, a demonstração sai sempre igual. "
+            "Ligar ou desligar recomeça o fluxo.",
+        )
+        if c3.button("Gerar 10 agora", key="live_burst", disabled=running, use_container_width=True):
+            _generate(10)
+        c4.button("Limpar fluxo", key="live_clear", on_click=_clear, use_container_width=True)
+        s1, s2 = st.columns(2)
+        interval = s1.select_slider(
             "Intervalo entre transações", options=[0.5, 1.0, 2.0, 3.0, 5.0], value=2.0, key=K_INTERVAL,
             format_func=lambda s: f"{s:g} s".replace(".", ","),
         )  # fmt: skip
-        c3.slider("Cenários de fraude no fluxo (%)", 0, 100, 20, step=5, key=K_FRAUD)
-        if c4.button("Gerar 10 agora", key="live_burst", disabled=running):
-            _generate(10)
-        c5.button("Limpar fluxo", key="live_clear", on_click=_clear)
+        s2.slider("Cenários de fraude no fluxo (%)", 0, 100, 20, step=5, key=K_FRAUD)
 
     # só o painel é redesenhado a cada transação; desligado, não há ciclo
     st.fragment(_dashboard, run_every=interval if running else None)(running)

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import random
 import re
+import time
 from collections import Counter
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
@@ -53,6 +54,10 @@ from src.synthetic.models import Customer
 
 SCENARIO_LABEL = dict(SCENARIOS)
 FRAUD_SCENARIOS = [key for key, _ in SCENARIOS if key != SCENARIO_NORMAL]
+
+# Semente do modo apresentação: com ela (e os mesmos controles), o fluxo
+# sorteia sempre a mesma sequência de clientes e cenários — dá para ensaiar.
+PRESENTATION_SEED = 2026
 
 # Quantas transações o monitor guarda (as mais antigas saem do fluxo).
 MAX_EVENTS = 500
@@ -87,6 +92,7 @@ class LiveEvent:
     device_label: str
     features: dict
     assessment: RiskResult
+    decision_ms: float  # cálculo das features + avaliação do motor
 
     @property
     def scenario_label(self) -> str:
@@ -150,6 +156,7 @@ def next_event(
     scenario, form = pick_form(ctx, rng, fraud_rate)
     city = CITY_BY_NAME[form.city]
     device_id = None if form.device_id == NEW_DEVICE else form.device_id
+    t0 = time.perf_counter()
     features = compute_transaction_features(
         session,
         customer_id=form.customer_id,
@@ -160,6 +167,8 @@ def next_event(
         device_id=device_id,
         city=city.city,
     )
+    assessment = engine.assess(features)
+    decision_ms = (time.perf_counter() - t0) * 1000
     return LiveEvent(
         seq=seq,
         received_at=now or datetime.now(),
@@ -177,7 +186,8 @@ def next_event(
         device_id=form.device_id,
         device_label=_device_label(ctx, form.device_id),
         features=features,
-        assessment=engine.assess(features),
+        assessment=assessment,
+        decision_ms=decision_ms,
     )
 
 
@@ -209,6 +219,7 @@ def summarize(events: list[LiveEvent]) -> dict:
         "amount_total": sum(e.amount for e in events),
         "amount_held": sum(e.amount for e in events if e.flagged),
         "avg_score": sum(e.assessment.risk_score for e in events) / len(events) if events else None,
+        "avg_decision_ms": sum(e.decision_ms for e in events) / len(events) if events else None,
     }
 
 
@@ -216,7 +227,7 @@ def events_frame(events: list[LiveEvent]) -> pd.DataFrame:
     """Uma linha por transação (mais recente primeiro), para tabela, mapa e gráficos."""
     columns = [
         "#", "Chegada", "Cliente", "Valor", "Cidade", "Data/hora", "Dispositivo", "Cenário",
-        "Risk Score", "Nível", "Ação", "Distância (km)", "lat", "lon", "fraude_injetada",
+        "Risk Score", "Nível", "Ação", "Distância (km)", "Decisão (ms)", "lat", "lon", "fraude_injetada",
     ]  # fmt: skip
     rows = [
         (
@@ -232,6 +243,7 @@ def events_frame(events: list[LiveEvent]) -> pd.DataFrame:
             e.assessment.level,
             e.assessment.action,
             e.features["distance_from_home_km"],
+            e.decision_ms,
             e.lat,
             e.lon,
             e.injected_fraud,
