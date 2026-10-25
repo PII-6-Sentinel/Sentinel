@@ -203,6 +203,11 @@ Para reproduzir: `python scripts/run_risk_engine.py`.
 
 ## 5. Resultados (teste, 39 clientes nunca vistos)
 
+> **Protótipo demonstrativo.** Os números desta seção e da 6.1 vêm do domínio
+> sintético, cujos rótulos foram gerados com os mesmos sinais que o motor usa:
+> validam a lógica do sistema, não o desempenho contra fraude real. Ver
+> [`VALIDACAO.md`](VALIDACAO.md).
+
 "Sinalizada" = não aprovada automaticamente (nível médio ou alto). Cada
 abordagem tem seus limiares calibrados na validação com o mesmo critério.
 

@@ -24,6 +24,7 @@ if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
 import risk_analysis as ra  # noqa: E402
+import ui  # noqa: E402
 import simulator as sim  # noqa: E402
 from src.risk.new_transaction import score_new_transaction  # noqa: E402
 
@@ -32,7 +33,7 @@ PAGE = "Simulador"
 RUN = "Analisar transação"
 SCENARIO_LABEL = dict(sim.SCENARIOS)
 VERDICT, HISTORY, ENGINE = "sim_verdict", "sim_history", "sim_engine"
-SIMULATION_NOTICE = "dados simulados; valida a lógica do sistema, não o desempenho em fraude real"
+SIMULATION_NOTICE = ui.PROTOTYPE_NOTICE
 
 
 def _button(at: AppTest, label: str):
