@@ -45,6 +45,7 @@ from sqlalchemy.orm import Session
 from theme import ACCENT, LEVEL_COLORS, RISK_HIGH, RISK_MEDIUM, TEXT, TEXT_SECONDARY, apply_plotly_theme
 from ui import (
     ACTION_LABEL,
+    PROTOTYPE_NOTICE,
     card,
     empty_state,
     esc,
@@ -56,6 +57,7 @@ from ui import (
     level_badge,
     location_map,
     md_brl,
+    metrics_caveat,
     panel,
     reasons_list,
     style_levels,
@@ -80,7 +82,7 @@ K_CUSTOMER, K_AMOUNT, K_CITY, K_DATE, K_TIME, K_DEVICE, K_CHANNEL = (
     "sim_channel",
 )
 RUN_LABEL = "Analisar transação"
-SIMULATION_NOTICE = "dados simulados; valida a lógica do sistema, não o desempenho em fraude real"
+SIMULATION_NOTICE = PROTOTYPE_NOTICE
 
 
 # ----------------------------------------------------------------------
@@ -365,6 +367,7 @@ def _render_verdict(entry: dict, just_ran: bool) -> None:
         f"({cfg.bands.review_threshold} e {cfg.bands.block_threshold} no score interno) aparecem sempre como 30 e 70. "
         f"Motor: {entry['engine_note']}."
     )
+    metrics_caveat()
 
     st.markdown(panel("Motivos", reasons_list(a.reasons, color)), unsafe_allow_html=True)
 

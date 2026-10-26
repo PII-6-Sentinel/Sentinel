@@ -56,6 +56,7 @@ from theme import (
 )
 from ui import (
     ACTION_LABEL,
+    PROTOTYPE_NOTICE,
     card,
     confusion_matrix_html,
     empty_state,
@@ -66,6 +67,7 @@ from ui import (
     fmt_km,
     fmt_pct,
     level_badge,
+    metrics_caveat,
     panel,
     reasons_list,
     score_badge,
@@ -83,8 +85,8 @@ K_PRESENTATION = "live_presentation"
 MAX_TOASTS = 3  # alertas por rodada (o "Gerar 10" não vira uma enxurrada)
 
 SIMULATION_NOTICE = (
-    "fluxo de transações simuladas pelo gerador do domínio sintético; o rótulo real é o do gerador, "
-    "não fraude real — valida a lógica do sistema, não o desempenho em fraude real"
+    f"{PROTOTYPE_NOTICE}. O fluxo vem do gerador do domínio sintético, e o \"rótulo real\" é o do gerador, "
+    "não fraude real"
 )
 FEED_ROWS = 50
 
@@ -210,6 +212,7 @@ def _kpis(s: dict) -> None:
     for row in (items[:3], items[3:]):
         for col, html in zip(st.columns(3, gap="small"), row):
             col.markdown(html, unsafe_allow_html=True)
+    metrics_caveat()
 
 
 def _verdict_html(e: LiveEvent) -> str:
@@ -380,6 +383,7 @@ def _quality(s: dict, events: list[LiveEvent]) -> None:
             text = [f"{r.Sinalizadas} de {r.Total} ({fmt_pct(r.Taxa, 0)})" for r in table.itertuples()]
             st.plotly_chart(_hbar(table["Cenário"], table["Sinalizadas"], ACCENT, text), key="live_scenarios", theme=None)
             st.caption('Em "Compra normal", cada uma é um alarme falso; nos demais, uma fraude capturada.')
+    metrics_caveat()
 
 
 def _reasons(events: list[LiveEvent]) -> None:

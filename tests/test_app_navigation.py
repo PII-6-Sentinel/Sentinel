@@ -144,3 +144,10 @@ def test_outdated_database_shows_how_to_fix_it(monkeypatch, tmp_path):
         at.sidebar.radio(key="nav_product").set_value(page).run()
         assert not at.exception, page
         assert any("desatualizado" in e.value and "--force" in e.value for e in at.error), page
+
+
+def test_overview_presents_the_engine_as_a_demonstrative_prototype():
+    at = _run()
+    text = " ".join(m.value for m in at.markdown)
+    assert "Protótipo demonstrativo" in text
+    assert "dados reais rotulados" in text

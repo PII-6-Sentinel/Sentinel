@@ -25,7 +25,11 @@ def _hero() -> None:
         "histórico do cliente, o cartão, o dispositivo, o local e o horário — e apontar as que se afastam do "
         "comportamento esperado, para que uma equipe de risco decida o que investigar.</p>"
         "<p>O sistema <strong>não decide sozinho</strong> se uma transação é fraude: ele classifica o risco de "
-        "cada uma e deixa a decisão com quem opera.</p></div>",
+        "cada uma e deixa a decisão com quem opera.</p>"
+        "<p><strong>Protótipo demonstrativo.</strong> O motor de risco roda sobre um domínio sintético, cujos rótulos "
+        "de fraude foram gerados com os mesmos sinais que ele usa: as métricas mostradas no app validam a lógica do "
+        "sistema, não o desempenho contra fraude real. Afirmar desempenho exigiria dados reais rotulados, separados "
+        "por período, com limiares escolhidos pelo custo de falsos positivos e de fraudes não detectadas.</p></div>",
         unsafe_allow_html=True,
     )
     with st.container(key="ov-cta"):

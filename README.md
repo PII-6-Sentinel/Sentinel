@@ -16,6 +16,13 @@ tem. Veja [`docs/SWOT_GUT.md`](docs/SWOT_GUT.md) para a análise de risco do
 projeto e [`docs/DOMINIO_SINTETICO.md`](docs/DOMINIO_SINTETICO.md) para a
 justificativa metodológica completa da via sintética.
 
+> **Protótipo demonstrativo.** O motor de risco e o app rodam sobre o domínio
+> sintético, cujos rótulos de fraude foram gerados com os mesmos sinais que o
+> motor usa: as métricas dele validam a **lógica** do sistema, não o
+> desempenho contra fraude real. O que cada via prova, e o que seria preciso
+> para afirmar desempenho (dados reais rotulados, separação por período,
+> limiares por custo), está em [`docs/VALIDACAO.md`](docs/VALIDACAO.md).
+
 ## Estrutura do repositório
 
 ```
@@ -84,7 +91,8 @@ da mesma base — o app é só uma camada de visualização sobre `src/`.
 
 ## 1. Pré-requisitos
 
-- **Python 3.11+** instalado e no PATH.
+- **Python 3.12+** instalado e no PATH (as versões fixadas em `requirements.txt`
+  não têm pacotes para o 3.11).
   No Windows, verifique com:
   ```bash
   python --version
@@ -391,12 +399,13 @@ split separadamente (mesmo resultado, já que usavam o mesmo
 `random_state`, mas com a lógica escrita duas vezes). Agora há um único
 lugar que decide como o dataset é dividido.
 
-### Análise de Threshold (`src/evaluation.py`, página "Análise de Threshold")
+### Análise de Threshold (`src/evaluation.py`)
 
 Score e decisão são conceitos diferentes (ver "Score, threshold e decisão"
-acima) — esta página deixa isso literalmente manipulável: escolha um
-modelo e mova um slider de threshold para ver, em tempo real, como
-precisão/recall/F1/matriz de confusão mudam **sem retreinar nada**.
+acima) — `threshold_sweep` mostra como precisão/recall/F1 mudam com o
+limiar **sem retreinar nada**. (A página interativa que usava esta função
+saiu do app junto com a seção científica, na Etapa 13; a função continua
+em `src/` e testada.)
 
 Alguns pontos de design importantes:
 
@@ -522,12 +531,23 @@ do time com validação estatística, o projeto segue algumas regras fixas
   proporção real de fraudes.
 - **MVP antes de otimização:** um baseline estatístico simples (regras) roda
   de ponta a ponta antes de investir em ajuste fino de modelos de ML.
+- **Avaliação temporal, volume de alertas e limiar por custo** no benchmark
+  público ([`src/benchmark.py`](src/benchmark.py),
+  `python scripts/run_kaggle_benchmark.py`): treino no passado e teste no
+  futuro, comparado ao split aleatório; alertas por dia para cada orçamento
+  de alertas; e o limiar que minimiza revisões + fraudes não detectadas. Ver
+  [`docs/VALIDACAO.md`](docs/VALIDACAO.md).
 
 ## 9. Testes
 
 ```bash
 pytest
 ```
+
+Os testes também rodam sozinhos no GitHub (Actions), em cada push e em cada
+pull request para a `main`, com Python 3.12 e as versões fixadas em
+`requirements.txt` (`.github/workflows/tests.yml`). Um PR com teste
+falhando aparece marcado em vermelho antes do merge.
 
 1.213 testes (a maioria parametrizações da escala de exibição), nenhum depende de dados baixados/gerados manualmente:
 
@@ -581,7 +601,7 @@ pytest
 - [x] AUC-PR e separação explícita entre score e threshold (`src/models.py`).
 - [x] Validação cruzada estratificada, só no treino (`src/evaluation.py`).
 - [x] Fonte única do split treino/teste (`get_train_test_split`, `src/preprocessing.py`).
-- [x] Página de Análise de Threshold interativa (`app/views/threshold_analysis.py`).
+- [x] Página de Análise de Threshold interativa (removida do app na Etapa 13; `threshold_sweep` continua em `src/evaluation.py`).
 - [x] Domínio sintético gerado e persistido em SQLite (`src/synthetic/`, `docs/DOMINIO_SINTETICO.md`).
 - [x] Testes unitários da camada de avaliação e do domínio sintético (`tests/`).
 - [ ] Rodar `01_exploracao.ipynb` com o dataset real e preencher a seção de conclusões.
@@ -590,5 +610,9 @@ pytest
 - [x] Feature de novidade de cidade (`new_city`) — ver `docs/RISK_ENGINE.md`, seção 6.
 - [x] Central de Transações: análise de risco ao vivo, tabela investigável, painel, eficiência no teste (`app/views/transactions.py`).
 - [x] Simulador ao vivo: formulário, cenários de demonstração, raciocínio passo a passo, veredito e histórico da sessão (`app/views/simulator.py`).
+- [x] Avaliação temporal, volume de alertas e limiar por custo no benchmark público (`src/benchmark.py`).
+- [x] Dependências fixadas e testes automáticos no GitHub Actions (`.github/workflows/tests.yml`).
+- [ ] Rodar `scripts/run_kaggle_benchmark.py` com o dataset real e registrar os números.
+- [ ] Validar com dados reais rotulados de uma instituição, separados por período, com limiares por custo (`docs/VALIDACAO.md`, seção 3).
 - [ ] Ajustar hiperparâmetros e comparar com balanceamento via SMOTE (não só `class_weight`).
 - [ ] Notebook comparativo formalizando as métricas das três abordagens (hoje só na aplicação).

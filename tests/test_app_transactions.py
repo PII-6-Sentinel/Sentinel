@@ -30,7 +30,7 @@ APP = str(APP_DIR / "app.py")
 RUN_LABEL = "Executar análise de risco"
 CLEAR_LABEL = "Limpar resultado"
 PAGE = "Central de Transações"
-SIMULATION_NOTICE = "dados simulados; valida a lógica do sistema, não o desempenho em fraude real"
+SIMULATION_NOTICE = ui.PROTOTYPE_NOTICE
 
 
 def _button(at: AppTest, label: str):

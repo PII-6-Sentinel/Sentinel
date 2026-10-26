@@ -1,0 +1,27 @@
+name: Testes
+
+# Roda a suíte inteira em cada push e em cada pull request para a main.
+# Os testes não precisam de dados baixados: o banco sintético é gerado em
+# arquivo temporário e o formato do Kaggle é simulado (tests/conftest.py).
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar dependências (versões fixadas)
+        run: pip install -r requirements.txt
+
+      - name: Rodar os testes
+        run: pytest -q

@@ -43,6 +43,17 @@ DB_PATH = PROJECT_ROOT / "data" / "synthetic" / "sentinel.db"
 LINE = "=" * 78
 
 
+# A ressalva acompanha as métricas: no topo do relatório e junto da comparação.
+CAVEAT = (
+    "AVISO: PROTÓTIPO DEMONSTRATIVO, dados SIMULADOS. Os rótulos de fraude foram\n"
+    "gerados a partir das mesmas features que o motor usa (circularidade). Estes\n"
+    "números validam a LÓGICA do sistema; não provam desempenho em fraude real.\n"
+    "Afirmar desempenho exige dados reais rotulados, separados por período, com\n"
+    "limiares escolhidos pelo custo de falso positivo e de fraude não detectada."
+)
+CAVEAT_SHORT = "(protótipo demonstrativo, dados sintéticos: valida a lógica, não o desempenho real)"
+
+
 def pct(x: float) -> str:
     return f"{x * 100:5.1f}%"
 
@@ -68,11 +79,7 @@ def main() -> None:
     print(LINE)
     print("SENTINEL - Risk Engine: relatório de avaliação")
     print(LINE)
-    print(
-        "AVISO: dados SIMULADOS. Os rótulos de fraude foram gerados a partir das\n"
-        "mesmas features que o motor usa (circularidade). Estes números validam a\n"
-        "LÓGICA do sistema; não provam desempenho em fraude real."
-    )
+    print(CAVEAT)
 
     # 1 ------------------------------------------------------------------
     title("1. Split por cliente (nenhum cliente em mais de um conjunto)")
@@ -119,6 +126,7 @@ def main() -> None:
 
     # 4 ------------------------------------------------------------------
     title("4. Comparação no TESTE (sinalizada = não aprovada automaticamente)")
+    print("  " + CAVEAT_SHORT)
     print(f"  {'abordagem':32s} {'PR-AUC':>7s} {'ROC-AUC':>8s} {'Precisão':>9s} {'Recall':>7s} {'F1':>6s}   TP  FP  FN")
     for _, r in ev.comparison.iterrows():
         print(

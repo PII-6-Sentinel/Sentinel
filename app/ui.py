@@ -140,6 +140,23 @@ def card(
     )
 
 
+# Ressalva única do protótipo: o motor roda sobre dados SINTÉTICOS, cujos
+# rótulos foram gerados com os mesmos sinais que ele usa. Toda métrica de
+# desempenho mostrada no app vem acompanhada dela (`metrics_caveat`).
+PROTOTYPE_NOTICE = (
+    "protótipo demonstrativo com dados sintéticos; as métricas validam a lógica do sistema, "
+    "não o desempenho contra fraude real"
+)
+
+
+def metrics_caveat() -> None:
+    """Ressalva curta, logo abaixo de um bloco de métricas."""
+    st.caption(
+        ":material/science: **Protótipo demonstrativo.** Métricas calculadas sobre dados sintéticos, gerados com "
+        "os mesmos sinais que o motor usa: validam a lógica do sistema, não provam desempenho contra fraude real."
+    )
+
+
 def simulation_notice(text: str) -> None:
     """Aviso de que os dados são simulados (bloco em tinta âmbar a 10%)."""
     st.warning(f"**Aviso:** {text}.", icon=":material/warning:")

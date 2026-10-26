@@ -37,6 +37,7 @@ from simulator import CHANNEL_OPTIONS
 from theme import LEVEL_COLORS
 from ui import (
     ACTION_LABEL,
+    PROTOTYPE_NOTICE,
     bar_rows,
     card,
     chips_html,
@@ -52,6 +53,7 @@ from ui import (
     html_table,
     level_badge,
     location_map,
+    metrics_caveat,
     panel,
     reasons_list,
     simulation_notice,
@@ -62,7 +64,7 @@ from src.risk.engine import ACTION_BY_LEVEL, ACTION_DESCRIPTION
 
 RESULT_KEY = "risk_analysis"
 RUN_FLAG = "tx_run_requested"
-SIMULATION_NOTICE = "dados simulados; valida a lógica do sistema, não o desempenho em fraude real"
+SIMULATION_NOTICE = PROTOTYPE_NOTICE
 
 SCENARIO_LABEL = {
     "anomalia_geografica": "Anomalia geográfica",
@@ -199,6 +201,7 @@ def _render_summary(result: AnalysisResult) -> None:
         f"Clientes: {result.customers_by_split[SPLIT_TRAIN]} de treino, "
         f"{result.customers_by_split[SPLIT_VALIDATION]} de validação, {result.customers_by_split[SPLIT_TEST]} de teste."
     )
+    metrics_caveat()
 
 
 # ----------------------------------------------------------------------
@@ -405,6 +408,7 @@ def _render_efficiency(result: AnalysisResult) -> None:
         card("Precisão da sinalização", fmt_pct(m["precision"]), "das sinalizadas, eram fraude", size="sm"),
         unsafe_allow_html=True,
     )
+    metrics_caveat()
 
     left, right = st.columns([1.1, 1], gap="medium")
     with left:
