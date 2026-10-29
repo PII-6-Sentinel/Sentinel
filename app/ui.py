@@ -28,6 +28,10 @@ from theme import (
     apply_plotly_theme,
 )
 
+# Gráficos sem a barra de ferramentas do Plotly (câmera, zoom, ...): numa
+# apresentação ela só polui; o hover continua funcionando.
+CHART_CONFIG = {"displayModeBar": False}
+
 LEVEL_CSS = {"baixo": "baixo", "médio": "medio", "alto": "alto"}
 ACTION_LABEL = {"aprovar": "Aprovar", "revisar": "Revisar", "bloquear": "Bloquear"}
 

@@ -37,6 +37,7 @@ from risk_analysis import (
 from simulator import CHANNEL_OPTIONS, fmt_hour
 from theme import LEVEL_COLORS
 from ui import (
+    CHART_CONFIG,
     ACTION_LABEL,
     PROTOTYPE_NOTICE,
     bar_rows,
@@ -171,28 +172,25 @@ def _render_summary(result: AnalysisResult) -> None:
     by_level, by_action = summary["por_nivel"], summary["por_acao"]
 
     st.subheader("Resumo da análise")
-    cols = st.columns(4)
-    cols[0].markdown(card("Transações analisadas", fmt_int(summary["total"]), "todos os clientes"), unsafe_allow_html=True)
-    for col, level in zip(cols[1:], LEVELS):
-        row = by_level.loc[level]
-        col.markdown(
-            card(f"Nível {level}", fmt_int(row["quantidade"]), f"{fmt_pct(row['percentual'])} das transações", LEVEL_COLORS[level]),
-            unsafe_allow_html=True,
-        )
-
-    cols = st.columns(4)
     flagged = by_action.loc[["revisar", "bloquear"]]
-    cols[0].markdown(
-        card("Sinalizadas (revisar + bloquear)", fmt_int(flagged["quantidade"].sum()), f"{fmt_pct(flagged['percentual'].sum())} das transações"),
-        unsafe_allow_html=True,
-    )
-    for col, action in zip(cols[1:], ACTIONS):
-        row = by_action.loc[action]
-        level = next(lv for lv in LEVELS if ACTION_BY_LEVEL[lv] == action)
-        col.markdown(
-            card(f"Ação: {ACTION_LABEL[action]}", fmt_int(row["quantidade"]), f"{fmt_pct(row['percentual'])} das transações", LEVEL_COLORS[level]),
-            unsafe_allow_html=True,
+    cards = [
+        card("Transações analisadas", fmt_int(summary["total"]), "todos os clientes", size="sm"),
+        card(
+            "Sinalizadas",
+            fmt_int(flagged["quantidade"].sum()),
+            f"{fmt_pct(flagged['percentual'].sum())} das transações (revisar + bloquear)",
+            size="sm",
+        ),
+    ]
+    # Nível e ação andam juntos (baixo → aprovar, ...): um cartão por par.
+    for level in LEVELS:
+        row = by_level.loc[level]
+        action = ACTION_LABEL[ACTION_BY_LEVEL[level]]
+        cards.append(
+            card(f"Nível {level} · {action}", fmt_int(row["quantidade"]), f"{fmt_pct(row['percentual'])} das transações", LEVEL_COLORS[level], size="sm")
         )
+    for col, html in zip(st.columns(5, gap="small"), cards):
+        col.markdown(html, unsafe_allow_html=True)
 
     cfg = result.engine.config
     st.caption(
@@ -342,7 +340,7 @@ def _render_investigation(result: AnalysisResult, transaction_id: int) -> None:
     with right:
         with st.container(key="sx-panel-map"):
             st.markdown('<div class="sx-panel-title">Residência e local da compra</div>', unsafe_allow_html=True)
-            st.plotly_chart(location_map(row), key="tx_map", theme=None)
+            st.plotly_chart(location_map(row), key="tx_map", theme=None, config=CHART_CONFIG)
         # Hábito estimado só com as compras ANTERIORES a esta — o mesmo com
         # que o motor a comparou. Vazio nas primeiras compras do cliente.
         known = pd.notna(row["habit_avg_amount"])
@@ -413,7 +411,6 @@ def _render_efficiency(result: AnalysisResult) -> None:
         card("Precisão da sinalização", fmt_pct(m["precision"]), "das sinalizadas, eram fraude", size="sm"),
         unsafe_allow_html=True,
     )
-    metrics_caveat()
 
     left, right = st.columns([1.1, 1], gap="medium")
     with left:

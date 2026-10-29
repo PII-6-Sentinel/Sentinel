@@ -182,8 +182,8 @@ def test_summary_cards_match_the_analysis(analyzed):
     for level in ra.LEVELS:
         assert f"Nível {level}" in cards
         assert f">{int(summary['por_nivel'].loc[level, 'quantidade']):,}<".replace(",", ".") in cards
-    for action in ("Aprovar", "Revisar", "Bloquear"):
-        assert f"Ação: {action}" in cards
+    for level, action in zip(ra.LEVELS, ("Aprovar", "Revisar", "Bloquear")):
+        assert f"Nível {level} · {action}" in cards
     assert "%" in cards
 
 

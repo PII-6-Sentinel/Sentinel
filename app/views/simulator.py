@@ -44,6 +44,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from theme import ACCENT, LEVEL_COLORS, RISK_HIGH, RISK_MEDIUM, TEXT, TEXT_SECONDARY, apply_plotly_theme
 from ui import (
+    CHART_CONFIG,
     ACTION_LABEL,
     PROTOTYPE_NOTICE,
     card,
@@ -339,7 +340,7 @@ def _render_verdict(entry: dict, just_ran: bool) -> None:
     left, right = st.columns([1.1, 1], gap="medium")
     with left:
         with st.container(key="sx-panel-gauge"):
-            st.plotly_chart(_gauge(a.risk_score, a.level), key="sim_gauge", theme=None)
+            st.plotly_chart(_gauge(a.risk_score, a.level), key="sim_gauge", theme=None, config=CHART_CONFIG)
     with right:
         st.markdown(
             card(
@@ -374,7 +375,7 @@ def _render_verdict(entry: dict, just_ran: bool) -> None:
     with map_col:
         with st.container(key="sx-panel-map"):
             st.markdown('<div class="sx-panel-title">Residência e local da compra</div>', unsafe_allow_html=True)
-            st.plotly_chart(location_map(result.map_row), key="sim_map", theme=None)
+            st.plotly_chart(location_map(result.map_row), key="sim_map", theme=None, config=CHART_CONFIG)
     with hist_col:
         st.markdown(_customer_panel(ctx), unsafe_allow_html=True)
 

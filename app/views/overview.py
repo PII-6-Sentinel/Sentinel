@@ -7,7 +7,7 @@ Os dois botões do topo navegam de verdade: escolhem a página no mesmo
 """
 
 import streamlit as st
-from ui import grid, layer_card, numbered_list, signal_card, step_card
+from ui import card, grid, layer_card, numbered_list, signal_card, step_card
 
 NAV_KEY = "nav_product"
 CENTRAL, SIMULATOR = "Central de Transações", "Simulador"
@@ -20,16 +20,12 @@ def _go(page: str) -> None:
 def _hero() -> None:
     st.markdown(
         '<div class="sx-hero"><h1 class="sx-display">Análise de risco transacional para instituições financeiras.</h1>'
-        "<p><strong>Sentinel é uma plataforma de análise de risco transacional</strong> para instituições "
-        "financeiras (bancos, fintechs). A proposta é examinar cada transação no contexto de quem a fez — o "
-        "histórico do cliente, o cartão, o dispositivo, o local e o horário — e apontar as que se afastam do "
-        "comportamento esperado, para que uma equipe de risco decida o que investigar.</p>"
-        "<p>O sistema <strong>não decide sozinho</strong> se uma transação é fraude: ele classifica o risco de "
-        "cada uma e deixa a decisão com quem opera.</p>"
-        "<p><strong>Protótipo demonstrativo.</strong> O motor de risco roda sobre um domínio sintético, cujos rótulos "
-        "de fraude foram gerados com os mesmos sinais que ele usa: as métricas mostradas no app validam a lógica do "
-        "sistema, não o desempenho contra fraude real. Afirmar desempenho exigiria dados reais rotulados, separados "
-        "por período, com limiares escolhidos pelo custo de falsos positivos e de fraudes não detectadas.</p></div>",
+        "<p>O Sentinel examina cada transação no contexto de quem a fez — histórico do cliente, dispositivo, "
+        "local e horário — e aponta as que se afastam do comportamento esperado. Ele <strong>não decide "
+        "sozinho</strong>: classifica o risco e deixa a decisão com a equipe de risco.</p>"
+        "<p><strong>Protótipo demonstrativo.</strong> O motor do app roda sobre dados sintéticos: as métricas "
+        "mostradas aqui validam a lógica do sistema, não o desempenho contra fraude real. Afirmar desempenho "
+        "exigiria dados reais rotulados de uma instituição — o mais perto disso é o teste com fraude real abaixo.</p></div>",
         unsafe_allow_html=True,
     )
     with st.container(key="ov-cta"):
@@ -80,14 +76,38 @@ def _signals() -> None:
     st.markdown(grid([signal_card(*s) for s in signals], 4), unsafe_allow_html=True)
 
 
+# Números de `python scripts/run_kaggle_benchmark.py` com o creditcard.csv
+# real (docs/VALIDACAO.md, seção 2). Fixos aqui: o app não carrega o Kaggle.
+KAGGLE_RESULTS = [
+    ("Transações reais", "284.807", "492 fraudes confirmadas (0,17%) — cartões europeus, Kaggle/ULB"),
+    ("PR-AUC do Gradient Boosting", "0,86", "Regressão Logística 0,72 · um chute daria 0,002"),
+    ("Alertas que eram fraude", "91%", "alertando só 0,1% das transações (179 por dia), teste no futuro"),
+    ("Prejuízo evitado", "59%", "custo de revisão + fraudes perdidas, contra não alertar nada"),
+]
+
+
+def _real_fraud() -> None:
+    st.subheader("Testado com fraude real")
+    st.markdown(
+        "Antes do motor, os modelos de ML foram validados num dataset público de fraudes reais: treino no "
+        "passado, teste no futuro, como em produção. Ninguém escreveu as regras dessas fraudes — o modelo as "
+        "aprendeu sozinho."
+    )
+    st.markdown(grid([card(*item, size="sm") for item in KAGGLE_RESULTS], 4), unsafe_allow_html=True)
+    st.caption(
+        "Fonte: `scripts/run_kaggle_benchmark.py` no repositório (detalhes em `docs/VALIDACAO.md`). Os números "
+        "validam as técnicas; o dataset não tem os sinais de cliente que o motor do app usa."
+    )
+
+
 def _architecture() -> None:
     st.subheader("Arquitetura em duas camadas")
     st.markdown("Uma camada que valida o método e outra que o coloca para operar.")
     science = layer_card(
         "Camada 1 · Científica",
         "Valida o método antes de usá-lo",
-        "<p>Comparação de modelos, métricas, validação cruzada e análise de threshold sobre um dataset público "
-        "do Kaggle. É a base que fundamenta as escolhas do motor de risco.</p>"
+        "<p>Comparação de modelos, métricas, validação cruzada, split temporal e limiar por custo sobre fraudes "
+        "reais do Kaggle (seção acima). É a base que fundamenta as escolhas do motor de risco.</p>"
         '<p style="margin-top:16px">Fica no repositório do projeto (<b style="color:var(--text)">notebooks/</b> '
         "e <b style=\"color:var(--text)\">src/</b>), fora do app: aqui aparece só o produto.</p>",
     )
@@ -98,7 +118,7 @@ def _architecture() -> None:
             [
                 ("Domínio sintético", "clientes, cartões, dispositivos e transações"),
                 ("Features comportamentais", "valor, distância, velocidade, horário, dispositivo e canal"),
-                ("Risk Engine", "modelo de ML (70%) + regras (30%) → Risk Score"),
+                ("Risk Engine", "modelo de ML + regras, com o peso calibrado na validação → Risk Score"),
                 ("Central, Simulador e Monitor ao Vivo", "em lote, transação a transação e em tempo real"),
             ]
         ),
@@ -152,5 +172,6 @@ def render():
     _hero()
     _how_it_works()
     _signals()
+    _real_fraud()
     _architecture()
     _status_and_planning()

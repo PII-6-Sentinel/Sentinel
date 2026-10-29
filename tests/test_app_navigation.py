@@ -55,11 +55,18 @@ def test_no_entry_point_to_a_scientific_section():
 def test_overview_states_the_product_proposal_and_where_the_science_lives():
     at = _run()
     text = " ".join(m.value for m in at.markdown) + " ".join(i.value for i in at.info)
-    # o negrito cobre "Sentinel é uma plataforma de análise de risco transacional"
-    assert "Sentinel é uma plataforma de análise de risco transacional" in text
+    assert "examina cada transação no contexto de quem a fez" in text
     assert "instituições financeiras" in text
     assert "não decide sozinho" in text
     assert "fora do app" in text  # a validação científica fica no repositório
+
+
+def test_overview_shows_the_real_fraud_results_with_their_source():
+    at = _run()
+    text = " ".join(m.value for m in at.markdown) + " ".join(c.value for c in at.caption)
+    assert "Testado com fraude real" in [s.value for s in at.subheader]
+    assert "284.807" in text and "0,86" in text
+    assert "run_kaggle_benchmark.py" in text and "VALIDACAO.md" in text
 
 
 def test_overview_does_not_need_the_kaggle_dataset(monkeypatch):
