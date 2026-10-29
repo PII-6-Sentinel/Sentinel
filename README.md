@@ -636,7 +636,7 @@ falhando aparece marcado em vermelho antes do merge.
 - [x] Avaliação temporal, volume de alertas e limiar por custo no benchmark público (`src/benchmark.py`).
 - [x] Dependências fixadas e testes automáticos no GitHub Actions (`.github/workflows/tests.yml`).
 - [x] Hábitos estimados do histórico, ruído legítimo no gerador e pesos do ML na Central (`docs/RISK_ENGINE.md`, seção 6.2).
-- [ ] Rodar `scripts/run_kaggle_benchmark.py` com o dataset real e registrar os números.
+- [x] Rodar `scripts/run_kaggle_benchmark.py` com o dataset real e registrar os números (`docs/VALIDACAO.md`, seção 2).
 - [ ] Validar com dados reais rotulados de uma instituição, separados por período, com limiares por custo (`docs/VALIDACAO.md`, seção 3).
 - [ ] Ajustar hiperparâmetros e comparar com balanceamento via SMOTE (não só `class_weight`).
 - [ ] Notebook comparativo formalizando as métricas das três abordagens (hoje só na aplicação).
