@@ -553,16 +553,29 @@ foram ajustados para que os cenários "dêem certo".
    horário como separador perfeito. Agora 4% das compras legítimas caem num
    horário qualquer e a janela é estimada do histórico; o horário deixou de
    dominar os coeficientes (seção 6.2).
-4. **O combinado não supera o ML sozinho** no ranking (seção 5). A
-   validação, sem restrição, escolheria o ML puro; o motor usa 30% regras /
-   70% ML porque a regra de escolha exige no mínimo 30% de regras, por
-   explicabilidade. É uma escolha consciente de produto, não o que os
-   números sozinhos recomendam — e o peso escolhido aprova 2 fraudes
-   geográficas que o 50/50 mandaria para revisão.
+4. **O combinado nem sempre supera o ML sozinho.** Na seed 42, o ML puro
+   tem PR-AUC 0,754 e o motor 0,694; em outras seeds o motor fica à frente
+   (item 6). A regra de escolha exige no mínimo 30% de regras, por
+   explicabilidade: é uma escolha consciente de produto, não o que os
+   números sozinhos recomendam.
 5. **Amostra pequena.** O teste tem 56 fraudes (6 a 14 por cenário):
    recall por cenário varia muito de um sorteio para outro; a validação
    cruzada mostra a ordem de grandeza da incerteza.
-6. **Limiares calibrados com 40 fraudes** não generalizam perfeitamente.
+6. **Peso e limiares mudam com a seed.** Calibrados com ~40 fraudes, eles
+   não generalizam perfeitamente. Mesmo gerador, 5 seeds (teste):
+
+   | seed | peso das regras | revisar acima de | bloquear acima de | PR-AUC regras | PR-AUC ML | PR-AUC motor | recall motor | FP motor |
+   |---|---|---|---|---|---|---|---|---|
+   | 42 | 70% | 18 | 79 | 0,629 | 0,754 | 0,694 | 98% | 258 |
+   | 7 | 40% | 35 | 80 | 0,625 | 0,679 | 0,739 | 97% | 111 |
+   | 123 | 60% | 29 | 79 | 0,662 | 0,617 | 0,746 | 85% | 86 |
+   | 2024 | 70% | 22 | 65 | 0,556 | 0,710 | 0,655 | 95% | 174 |
+   | 99 | 30% | 24 | 87 | 0,705 | 0,706 | 0,747 | 90% | 189 |
+
+   O peso escolhido vai de 30% a 70% de regras, e o limiar de revisão de
+   18 a 35. O que se mantém: o motor fica entre 0,65 e 0,75 de PR-AUC e
+   supera as regras sozinhas em 4 das 5 seeds. Os números da seed 42 não
+   são "o" resultado do motor, são um sorteio.
 7. **`ml_score` não é probabilidade calibrada** (`class_weight`
    balanceado infla as probabilidades da classe minoritária).
 8. **`dispositivo_novo` continua fácil de separar.** O gerador sempre cria
@@ -570,11 +583,18 @@ foram ajustados para que os cenários "dêem certo".
    a Etapa 14 há clientes legítimos com celular novo e não confiável, mas a
    combinação "aparelho novo + não confiável + online" segue quase
    exclusiva da fraude — outro caso de circularidade.
+9. **Folga dos sinais isolados depende da calibração.** Até a Etapa 12,
+   dispositivo novo era aprovado por até 2 pontos e horário atípico revisado
+   por 1. Com as faixas da Etapa 14 (18 e 79), todos os cenários isolados do
+   Simulador têm folga (seção 6.2). Mas essas faixas vêm de ~40 fraudes e
+   mudam com a seed (item 6): com o limiar de revisão 35 da seed 7, o
+   horário atípico (31–40) voltaria a ficar rente.
 10. **Muitas revisões (Etapa 14).** Com os dados mais realistas, revisar
     90% das fraudes exige mandar 13% das transações para revisão humana
     (seção 6.2). A meta de recall foi mantida; num banco real, o limiar
     seria escolhido pelo custo de revisão.
-9. **Sinais isolados ficam rente aos limiares** (seção 7, cenários do
-   Simulador): dispositivo novo é aprovado por até 2 pontos e horário
-   atípico é revisado por 1. A decisão nesses casos depende de poucos
-   pontos em limiares calibrados com 40 fraudes (item 6).
+11. **Compra online usa a localização do estabelecimento.** Distância e
+    velocidade de uma compra online vêm das coordenadas do lojista. Por isso
+    uma fraude geográfica online "revela" a cidade do fraudador, o que não
+    acontece de verdade (num banco real seria a geolocalização do IP, que é
+    imprecisa e fácil de mascarar). É uma premissa do domínio sintético.
