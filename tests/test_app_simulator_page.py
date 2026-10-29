@@ -291,8 +291,9 @@ def test_verdict_shows_level_action_scores_reasons_map_and_customer_history(page
     _analyze(page, sim.SCENARIO_ATYPICAL_AMOUNT)
     entry = page.session_state[VERDICT]
     a, ctx = entry["result"].assessment, entry["result"].context
+    banner = next(m.value for m in page.markdown if 'class="sx-verdict"' in m.value)
+    assert ui.ACTION_LABEL[a.action] in banner and f"nível {a.level}" in banner
     cards = " ".join(m.value for m in page.markdown if "metric-card" in m.value)
-    assert "Ação recomendada" in cards and f"nível {a.level}" in cards
     assert "Score do ML" in cards and "Score das regras" in cards
     assert f">{a.ml_score:.0f}<" in cards and f">{a.behavior_score:.0f}<" in cards
     text = _texts(page)

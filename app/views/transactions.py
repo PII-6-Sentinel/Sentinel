@@ -15,6 +15,7 @@ só há orquestração e exibição (componentes visuais em `app/ui.py`).
 """
 
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 from risk_analysis import (
     ACTIONS,
@@ -26,6 +27,7 @@ from risk_analysis import (
     AnalysisResult,
     DatabaseNotFound,
     apply_filters,
+    daily_levels,
     database_problem,
     efficiency,
     investigate,
@@ -33,9 +35,10 @@ from risk_analysis import (
     resolve_db_path,
     run_analysis,
     summarize,
+    top_suspects,
 )
 from simulator import CHANNEL_OPTIONS, fmt_hour
-from theme import LEVEL_COLORS
+from theme import LEVEL_COLORS, SURFACE, SURFACE_RAISED, TEXT, apply_plotly_theme
 from ui import (
     CHART_CONFIG,
     ACTION_LABEL,
@@ -201,6 +204,125 @@ def _render_summary(result: AnalysisResult) -> None:
         f"{result.customers_by_split[SPLIT_VALIDATION]} de validação, {result.customers_by_split[SPLIT_TEST]} de teste."
     )
     metrics_caveat()
+
+
+# ----------------------------------------------------------------------
+# painel: o que aconteceu no período, onde está o risco e os piores casos
+# ----------------------------------------------------------------------
+
+DASHBOARD_SUSPECTS = 5
+
+
+def _daily_chart(result: AnalysisResult) -> go.Figure:
+    """Transações por dia, empilhadas por nível de risco."""
+    daily = daily_levels(result.frame)
+    fig = go.Figure()
+    for level in LEVELS:
+        fig.add_trace(
+            go.Bar(
+                x=daily.index,
+                y=daily[level],
+                name=f"risco {level}",
+                marker=dict(color=LEVEL_COLORS[level]),
+                hovertemplate="%{x|%d/%m}: %{y} transações<extra>risco " + level + "</extra>",
+            )
+        )
+    apply_plotly_theme(fig)
+    fig.update_layout(
+        barmode="stack",
+        bargap=0.25,
+        height=300,
+        margin=dict(t=8, b=8, l=8, r=8),
+        legend=dict(orientation="h", y=-0.15, x=0),
+        yaxis=dict(automargin=True, title=None),
+    )
+    fig.update_xaxes(tickformat="%d/%m")
+    return fig
+
+
+def _risk_map(result: AnalysisResult) -> go.Figure:
+    """Onde aconteceram as transações de risco alto (tamanho = valor)."""
+    high = result.frame[result.frame["level"] == "alto"]
+    max_amount = max(float(high["amount"].max()) if len(high) else 1.0, 1.0)
+    fig = go.Figure(
+        go.Scattergeo(
+            lat=high["tx_lat"],
+            lon=high["tx_lon"],
+            mode="markers",
+            marker=dict(
+                size=8 + 20 * (high["amount"] / max_amount) ** 0.5,
+                color=LEVEL_COLORS["alto"],
+                opacity=0.75,
+                line=dict(width=1, color=TEXT),
+            ),
+            customdata=high[["transaction_id", "customer", "city", "amount", "risk_score"]].values,
+            hovertemplate="#%{customdata[0]} · %{customdata[1]}<br>%{customdata[2]} · R$ %{customdata[3]:,.2f}"
+            "<br>Risk Score %{customdata[4]}<extra></extra>",
+        )
+    )
+    fig.update_geos(
+        lataxis_range=[-40, 55],
+        lonaxis_range=[-95, 15],
+        showland=True,
+        landcolor=SURFACE_RAISED,
+        showocean=True,
+        oceancolor="#0A0A0B",
+        showcountries=True,
+        countrycolor=SURFACE,
+        coastlinecolor=SURFACE,
+        showlakes=False,
+        showframe=False,
+        bgcolor="rgba(0,0,0,0)",
+    )
+    apply_plotly_theme(fig)
+    fig.update_layout(height=300, margin=dict(t=0, b=0, l=0, r=0), showlegend=False)
+    return fig
+
+
+def _investigate_callback(transaction_id: int) -> None:
+    """Botão "Investigar" de um caso suspeito: preenche a busca por ID."""
+    st.session_state["tx_lookup"] = str(transaction_id)
+
+
+def _suspect_card(result: AnalysisResult, row) -> str:
+    a = investigate(result, int(row["transaction_id"])).assessment
+    color = LEVEL_COLORS[a.level]
+    # O motivo do ML ("padrão semelhante a fraudes") aparece em quase todos;
+    # no cartão vale mais mostrar os sinais específicos do caso.
+    specific = [r for r in a.reasons if not r.startswith("Modelo estatístico")] or a.reasons
+    reasons = "".join(f"<li>{esc(r)}</li>" for r in specific[:2])
+    return (
+        f'<div class="sx-suspect" style="--lvl:{color}">'
+        f'<div class="sx-suspect-score">{a.risk_score}</div>'
+        f'<div class="sx-suspect-who">{esc(row["customer"])}</div>'
+        f'<div class="sx-suspect-what">{fmt_brl(row["amount"])} · {esc(row["city"])}<br>'
+        f'{pd.Timestamp(row["timestamp"]):%d/%m %H:%M} · {ACTION_LABEL[a.action]}</div>'
+        f'<ul>{reasons}</ul></div>'
+    )
+
+
+def _render_dashboard(result: AnalysisResult) -> None:
+    left, right = st.columns([1.3, 1], gap="medium")
+    with left:
+        with st.container(key="sx-panel-daily"):
+            st.markdown('<div class="sx-panel-title">Transações por dia, por nível de risco</div>', unsafe_allow_html=True)
+            st.plotly_chart(_daily_chart(result), key="tx_daily", theme=None, config=CHART_CONFIG)
+    with right:
+        with st.container(key="sx-panel-riskmap"):
+            st.markdown('<div class="sx-panel-title">Onde estão os casos de risco alto</div>', unsafe_allow_html=True)
+            st.plotly_chart(_risk_map(result), key="tx_riskmap", theme=None, config=CHART_CONFIG)
+
+    st.markdown(f'<div class="sx-section-title">Os {DASHBOARD_SUSPECTS} casos mais suspeitos</div>', unsafe_allow_html=True)
+    for col, (_, row) in zip(st.columns(DASHBOARD_SUSPECTS, gap="small"), top_suspects(result.frame, DASHBOARD_SUSPECTS).iterrows()):
+        with col:
+            st.markdown(_suspect_card(result, row), unsafe_allow_html=True)
+            st.button(
+                "Investigar",
+                key=f"tx_suspect_{int(row['transaction_id'])}",
+                on_click=_investigate_callback,
+                args=(int(row["transaction_id"]),),
+                width="stretch",
+            )
 
 
 # ----------------------------------------------------------------------
@@ -517,6 +639,7 @@ def render():
         _render_step_log(result)
 
     _render_summary(result)
+    _render_dashboard(result)
 
     st.subheader("Transações")
     view = _render_filters(result).reset_index(drop=True)

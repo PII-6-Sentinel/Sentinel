@@ -360,6 +360,18 @@ def summarize(frame: pd.DataFrame) -> dict:
     return {"total": total, "por_nivel": dist("level", LEVELS), "por_acao": dist("action", ACTIONS)}
 
 
+def daily_levels(frame: pd.DataFrame) -> pd.DataFrame:
+    """Transações por dia e nível (linhas = dias, colunas = `LEVELS`)."""
+    days = pd.to_datetime(frame["timestamp"]).dt.normalize()
+    counts = frame.groupby([days, "level"]).size().unstack(fill_value=0)
+    return counts.reindex(columns=LEVELS, fill_value=0).sort_index()
+
+
+def top_suspects(frame: pd.DataFrame, n: int = 5) -> pd.DataFrame:
+    """As `n` transações de maior risco (a tabela já vem ordenada assim)."""
+    return frame.head(n)
+
+
 def apply_filters(
     frame: pd.DataFrame,
     levels=None,

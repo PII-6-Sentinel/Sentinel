@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pandas as pd
 import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
@@ -216,7 +217,7 @@ def test_efficiency_block_shows_the_simulation_notice_and_only_test_numbers(anal
     assert f"{m['tp']} de {eff['frauds']}" in cards
     assert f">{m['fp']}<" in cards  # falsos positivos
     assert f">{m['fn']}<" in cards  # fraudes perdidas
-    assert len(analyzed.get("plotly_chart")) == 0  # sem transação aberta não há mapa; a matriz é HTML
+    assert len(analyzed.get("plotly_chart")) == 2  # só o painel (por dia + mapa de risco alto); a matriz é HTML
     matrix = next(x.value for x in analyzed.markdown if 'class="sx-matrix"' in x.value)
     for value in (m["tn"], m["fp"], m["fn"], m["tp"]):
         assert f'<div class="n">{ui.fmt_int(value)}</div>' in matrix
@@ -345,7 +346,7 @@ def test_lookup_by_id_opens_the_panel_with_everything_the_investigator_needs(ana
     cards = " ".join(m.value for m in analyzed.markdown if "metric-card" in m.value)
     assert "Risk Score final" in cards and "Score do ML" in cards and "Score das regras" in cards
     assert f"nível {row['level']}" in cards
-    assert len(analyzed.get("plotly_chart")) == 1  # o mapa (a matriz de confusão é HTML)
+    assert len(analyzed.get("plotly_chart")) == 3  # painel (2) + mapa da transação; a matriz é HTML
     assert analysis_calls["n"] == 1
 
 
@@ -476,3 +477,40 @@ def test_model_panel_shows_every_learned_weight_from_the_trained_model(analyzed)
     for name, value in coefs.items():
         assert ra.ML_FEATURE_LABEL[name] in panel
         assert f"{value:+.2f}".replace(".", ",") in panel
+
+
+def test_dashboard_shows_days_by_level_the_high_risk_map_and_the_top_suspects(analyzed):
+    result = analyzed.session_state["risk_analysis"]
+    figures = {el.proto.id: json.loads(el.proto.spec)["data"] for el in analyzed.get("plotly_chart")}
+    datas = list(figures.values())
+    daily = next(d for d in datas if d and d[0].get("type") == "bar")
+    assert [t["name"] for t in daily] == [f"risco {lv}" for lv in ra.LEVELS]
+    assert int(ra.daily_levels(result.frame).to_numpy().sum()) == len(result.frame)
+    geo = next(d for d in datas if d and d[0].get("type") == "scattergeo")
+    assert len(geo[0]["customdata"]) == (result.frame["level"] == "alto").sum()
+
+    top = ra.top_suspects(result.frame, 5)
+    cards = " ".join(m.value for m in analyzed.markdown if "sx-suspect" in m.value)
+    for row in top.itertuples():
+        assert row.customer in cards
+    assert sum(b.label == "Investigar" for b in analyzed.button) == 5
+
+
+def test_investigate_button_opens_that_suspect(analyzed):
+    tx_id = int(ra.top_suspects(analyzed.session_state["risk_analysis"].frame, 1)["transaction_id"].iloc[0])
+    analyzed.button(key=f"tx_suspect_{tx_id}").click().run()
+    assert analyzed.text_input(key="tx_lookup").value == str(tx_id)
+    assert f"Investigação da transação #{tx_id}" in [s.value for s in analyzed.subheader]
+
+
+def test_daily_levels_counts_every_transaction_once():
+    frame = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(["2026-06-01 10:00", "2026-06-01 23:00", "2026-06-02 08:00"]),
+            "level": ["baixo", "alto", "baixo"],
+        }
+    )
+    daily = ra.daily_levels(frame)
+    assert list(daily.columns) == ra.LEVELS
+    assert daily.loc["2026-06-01"].tolist() == [1, 0, 1]
+    assert daily.loc["2026-06-02"].tolist() == [1, 0, 0]

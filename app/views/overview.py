@@ -7,7 +7,8 @@ Os dois botões do topo navegam de verdade: escolhem a página no mesmo
 """
 
 import streamlit as st
-from ui import card, grid, layer_card, numbered_list, signal_card, step_card
+from theme import RISK_HIGH
+from ui import card, esc, grid, layer_card, numbered_list, signal_card, step_card
 
 NAV_KEY = "nav_product"
 CENTRAL, SIMULATOR = "Central de Transações", "Simulador"
@@ -17,7 +18,50 @@ def _go(page: str) -> None:
     st.session_state[NAV_KEY] = page
 
 
+# Uma transação real da Central (seed 42, conjunto de teste: o modelo nunca
+# viu este cliente), com o que o motor respondeu. Fixa aqui para a página
+# abrir na hora, sem rodar a análise; confira com a transação #2269 na Central.
+DEMO_TRANSACTION = {
+    "id": 2269,
+    "customer": "Fernanda Carvalho · mora em Madri",
+    "purchase": "R$ 181,64 num posto em Belo Horizonte",
+    "when": "20/06/2026 às 20:10",
+    "score": 99,
+    "action": "Bloquear",
+    "reasons": [
+        "Viagem impossível: 1.390 km/h entre duas compras",
+        "Localização incomum: 7.874 km da residência",
+        "Primeira compra do cliente nesta cidade",
+        "Horário fora da janela habitual (3,7 h fora)",
+    ],
+}
+
+
+def _demo_card() -> str:
+    d = DEMO_TRANSACTION
+    reasons = "".join(f"<li>{esc(r)}</li>" for r in d["reasons"])
+    return (
+        f'<div class="sx-demo" style="--lvl:{RISK_HIGH}">'
+        f'<div class="sx-demo-head"><span class="sx-demo-live">Exemplo real</span>'
+        f'<span>Transação #{d["id"]}</span></div>'
+        f'<div class="sx-demo-who">{esc(d["customer"])}</div>'
+        f'<div class="sx-demo-what">{esc(d["purchase"])}<br>{esc(d["when"])}</div>'
+        f'<div class="sx-demo-verdict"><div class="sx-demo-score">{d["score"]}<small>Risk Score</small></div>'
+        f'<div class="sx-demo-action">{esc(d["action"])}<small>nível alto · revisão urgente</small></div></div>'
+        f'<ul class="sx-demo-reasons">{reasons}</ul>'
+        f'<div class="sx-demo-foot">Decidido em milissegundos, com os motivos à vista.</div></div>'
+    )
+
+
 def _hero() -> None:
+    text, demo = st.columns([1.35, 1], gap="large")
+    with text:
+        _hero_text()
+    with demo:
+        st.markdown(_demo_card(), unsafe_allow_html=True)
+
+
+def _hero_text() -> None:
     st.markdown(
         '<div class="sx-hero"><h1 class="sx-display">Análise de risco transacional para instituições financeiras.</h1>'
         "<p>O Sentinel examina cada transação no contexto de quem a fez — histórico do cliente, dispositivo, "
