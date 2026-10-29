@@ -2,8 +2,9 @@
 
 Só orquestração: lê as transações do banco, percorre cada cliente em ordem
 cronológica mantendo o "estado" que as features precisam (transação
-anterior, dispositivos, cidades e canais já vistos) e chama as funções puras de
-`src/synthetic/features.py`. Nenhuma lógica de risco aqui.
+anterior, dispositivos, cidades e canais já vistos, hábitos de valor e
+horário) e chama as funções puras de `src/synthetic/features.py`. Nenhuma
+lógica de risco aqui.
 """
 
 from __future__ import annotations
@@ -15,15 +16,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.synthetic.features import (
-    amount_deviation,
+    HabitProfile,
     channel_rarity,
+    habit_features,
     implied_travel_speed,
     is_contactless,
     is_online,
     location_distance,
     new_city_flag,
     new_device_flag,
-    unusual_hour,
 )
 from src.synthetic.models import Customer, Merchant, Transaction
 
@@ -39,7 +40,11 @@ FEATURE_COLUMNS = [
     "is_contactless",
     "channel_rarity",
 ]
-TABLE_COLUMNS = ["transaction_id", *FEATURE_COLUMNS, "is_fraud", "fraud_scenario"]
+# Hábito estimado no momento da transação (só com as compras anteriores):
+# não é feature, é o contexto que explica `amount_deviation`/`unusual_hour`.
+# Vazio enquanto o cliente não tem histórico suficiente.
+HABIT_COLUMNS = ["habit_avg_amount", "habit_hour_start", "habit_hour_end"]
+TABLE_COLUMNS = ["transaction_id", *FEATURE_COLUMNS, *HABIT_COLUMNS, "is_fraud", "fraud_scenario"]
 
 
 def build_feature_table(session: Session) -> pd.DataFrame:
@@ -55,8 +60,13 @@ def build_feature_table(session: Session) -> pd.DataFrame:
     feature devolve None; a conversão para 0.0 acontece aqui, em um só
     lugar, para a tabela nunca ter NaN nas colunas de feature).
 
-    `fraud_scenario` é None para transações normais — esse é o único
-    "vazio" esperado na tabela.
+    Valor e horário são comparados com o hábito estimado das compras
+    ANTERIORES (`HabitProfile`), nunca com os parâmetros do gerador
+    guardados em `Customer`.
+
+    `fraud_scenario` é None para transações normais e as `HABIT_COLUMNS`
+    ficam vazias enquanto não há histórico suficiente — os únicos "vazios"
+    esperados na tabela.
     """
     customers = {c.id: c for c in session.scalars(select(Customer))}
     merchant_city = dict(session.execute(select(Merchant.id, Merchant.city)).all())
@@ -68,6 +78,7 @@ def build_feature_table(session: Session) -> pd.DataFrame:
     seen_devices: dict[int, set[int]] = {}
     seen_cities: dict[int, set[str]] = {}
     seen_channels: dict[int, Counter] = {}
+    habits: dict[int, HabitProfile] = {}
     rows = []
 
     for tx in transactions:
@@ -76,15 +87,17 @@ def build_feature_table(session: Session) -> pd.DataFrame:
         devices = seen_devices.setdefault(cid, set())
         cities = seen_cities.setdefault(cid, set())
         channels = seen_channels.setdefault(cid, Counter())
+        habit = habits.setdefault(cid, HabitProfile())
         city = merchant_city[tx.merchant_id]
         travel = implied_travel_speed(tx, previous.get(cid))
+        deviation, hour_gap = habit_features(tx, habit)
 
         rows.append(
             {
                 "transaction_id": tx.id,
-                "amount_deviation": amount_deviation(tx, customer),
+                "amount_deviation": deviation,
                 "location_distance": location_distance(tx),
-                "unusual_hour": unusual_hour(tx, customer),
+                "unusual_hour": hour_gap,
                 "new_device": new_device_flag(tx, devices),
                 "new_city": new_city_flag(city, customer, cities),
                 "implied_speed_kmh": 0.0 if travel.speed_kmh is None else travel.speed_kmh,
@@ -92,6 +105,7 @@ def build_feature_table(session: Session) -> pd.DataFrame:
                 "is_online": is_online(tx),
                 "is_contactless": is_contactless(tx),
                 "channel_rarity": channel_rarity(tx.channel, channels),
+                **habit_context(habit),
                 "is_fraud": tx.is_fraud,
                 "fraud_scenario": tx.fraud_scenario,
             }
@@ -100,6 +114,19 @@ def build_feature_table(session: Session) -> pd.DataFrame:
         devices.add(tx.device_id)
         cities.add(city)
         channels[tx.channel] += 1
+        habit.add(tx)
         previous[cid] = tx
 
     return pd.DataFrame(rows, columns=TABLE_COLUMNS)
+
+
+def habit_context(habit: HabitProfile) -> dict[str, float | None]:
+    """As `HABIT_COLUMNS` de uma transação: o hábito com que ela foi
+    comparada, ou vazio se ainda não havia histórico suficiente."""
+    if not habit.is_known:
+        return dict.fromkeys(HABIT_COLUMNS)
+    return {
+        "habit_avg_amount": habit.avg_amount_baseline,
+        "habit_hour_start": habit.typical_hour_start,
+        "habit_hour_end": habit.typical_hour_end,
+    }

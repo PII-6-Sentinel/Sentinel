@@ -308,3 +308,45 @@ def test_new_device_scenario_keeps_city_amount_and_hour_normal(default_dataset):
         c = t.customer
         assert c.typical_hour_start <= t.timestamp.hour <= c.typical_hour_end
         assert t.amount < 6 * c.avg_amount_baseline
+
+
+# ---------------------------------------------------------------------------
+# Ruído legítimo e canal das fraudes
+# ---------------------------------------------------------------------------
+
+
+def test_some_legitimate_purchases_break_the_customer_habits(default_dataset):
+    """Clientes reais nem sempre seguem o hábito: parte das compras normais
+    sai da janela de horário, parte fica bem acima da média, e alguns
+    clientes trocam de aparelho — às vezes ainda não verificado."""
+    normal = [t for t in default_dataset.transactions if not t.is_fraud]
+    off_hours = [t for t in normal if not t.customer.typical_hour_start <= t.timestamp.hour <= t.customer.typical_hour_end]
+    large = [t for t in normal if t.amount >= 2.5 * t.customer.avg_amount_baseline]
+    assert 0.01 < len(off_hours) / len(normal) < 0.06
+    assert 0.01 < len(large) / len(normal) < 0.06
+
+    new_untrusted = {
+        id(t.device) for t in normal if not t.device.is_trusted and t.device.first_seen_at == t.timestamp
+    }
+    assert len(new_untrusted) >= 5  # aparelho novo e não confiável também acontece com o titular
+
+
+def test_legitimate_noise_keeps_one_purchase_per_minute(default_dataset):
+    seen = set()
+    for t in default_dataset.transactions:
+        if not t.is_fraud:
+            key = (id(t.customer), t.timestamp)
+            assert key not in seen
+            seen.add(key)
+
+
+def test_fraud_channel_often_follows_the_victims_habit(default_dataset):
+    """Metade das fraudes (fora dispositivo novo) imita o canal do titular:
+    o canal ajuda, mas não entrega o rótulo."""
+    frauds = [
+        t for t in default_dataset.transactions
+        if t.is_fraud and t.fraud_scenario != FraudScenario.DISPOSITIVO_NOVO.value
+    ]
+    normal = [t for t in default_dataset.transactions if not t.is_fraud]
+    online = lambda txs: sum(t.channel == "online" for t in txs) / len(txs)  # noqa: E731
+    assert online(normal) < online(frauds) < 0.6

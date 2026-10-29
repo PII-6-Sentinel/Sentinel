@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import IsolationForest
+from sklearn.ensemble import HistGradientBoostingClassifier, IsolationForest
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     average_precision_score,
@@ -57,7 +57,7 @@ class StatisticalBaseline:
     Esta classe é SÓ um escore — não decide "fraude ou não" e não conhece
     nenhuma taxa de contaminação. `fit()` existe apenas por uniformidade de
     interface com os modelos do scikit-learn (permite chamar `.fit(X_train)`
-    igual para os três modelos); como o escore aqui é uma fórmula fixa, não
+    igual para os modelos); como o escore aqui é uma fórmula fixa, não
     há nada de fato "aprendido" com os dados. A escolha do threshold de
     decisão é responsabilidade de `calibrate_threshold_by_contamination` /
     `apply_threshold`, chamadas separadamente por quem for avaliar o modelo.
@@ -95,7 +95,7 @@ class ModelResult:
 
 
 def train_all_models(X_train: pd.DataFrame, y_train: pd.Series) -> dict[str, object]:
-    """Treina as três abordagens comparadas pelo projeto.
+    """Treina as quatro abordagens comparadas pelo projeto.
 
     Nenhum modelo recebe a taxa real de fraude neste passo — treino e
     calibração de threshold são etapas deliberadamente separadas (ver
@@ -105,6 +105,23 @@ def train_all_models(X_train: pd.DataFrame, y_train: pd.Series) -> dict[str, obj
     `IsolationForest.predict()`/`.decision_function()` (só `score_samples()`,
     via `fraud_score`), esse parâmetro não influencia nenhum resultado — é
     mantido apenas porque o construtor do sklearn o exige.
+
+    Gradient Boosting (`HistGradientBoostingClassifier`): árvores de decisão
+    treinadas em sequência, cada uma corrigindo os erros das anteriores. Ao
+    contrário da Regressão Logística, aprende interações e limiares entre
+    features (ex.: "V14 muito baixo E valor alto") sem que ninguém as
+    escreva — é o modelo que mais aprende padrões sozinho entre os quatro.
+    Sem `class_weight`: o escore é usado para ORDENAR as transações e o
+    ponto de operação vem de `calibrate_threshold_by_contamination`, então
+    reponderar as classes não muda a decisão e só distorceria o escore.
+    Regularizado (`learning_rate` 0,05, `l2_regularization`, folhas com ao
+    menos 50 transações): com 0,17% de fraudes, uma folha com 1 ou 2 fraudes
+    recebe um valor extremo e o treino diverge. Sem isso, no Kaggle real, a
+    perda subia a cada árvore, o early stopping parava na 11ª e o ROC-AUC
+    ficava em 0,48 (pior que o acaso). A configuração foi escolhida numa
+    divisão interna do treino (PR-AUC 0,54 → 0,82), sem olhar o teste.
+    `early_stopping=False`: com a regularização o treino é estável e as
+    300 árvores rendem mais que parar cedo.
     """
     baseline = StatisticalBaseline().fit(X_train)
 
@@ -116,10 +133,21 @@ def train_all_models(X_train: pd.DataFrame, y_train: pd.Series) -> dict[str, obj
         contamination="auto", n_estimators=200, random_state=42, n_jobs=-1
     ).fit(X_train)
 
+    gradient_boosting = HistGradientBoostingClassifier(
+        max_iter=300,
+        learning_rate=0.05,
+        l2_regularization=1.0,
+        min_samples_leaf=50,
+        max_leaf_nodes=15,
+        early_stopping=False,
+        random_state=42,
+    ).fit(X_train, y_train)
+
     return {
         "Baseline Estatístico": baseline,
         "Regressão Logística": logreg,
         "Isolation Forest": iso_forest,
+        "Gradient Boosting": gradient_boosting,
     }
 
 
@@ -135,7 +163,7 @@ def fraud_score(model, X: pd.DataFrame) -> np.ndarray:
         return model.decision_score(X)
     if isinstance(model, IsolationForest):
         # score_samples: quanto menor, mais anômalo. Invertido para manter
-        # "maior = mais suspeito" consistente entre os três modelos.
+        # "maior = mais suspeito" consistente entre os modelos.
         return -model.score_samples(X)
     if hasattr(model, "predict_proba"):
         return model.predict_proba(X)[:, 1]
@@ -169,7 +197,7 @@ def calibrate_threshold_by_contamination(y_score: np.ndarray, contamination: flo
 
     Isso também NÃO é um threshold de produção real: estamos usando a taxa
     exata de fraude do dataset rotulado só para gerar, nesta etapa
-    acadêmica, um ponto de operação default comparável entre os três
+    acadêmica, um ponto de operação default comparável entre os
     modelos. Em produção, essa taxa não estaria disponível com essa
     precisão — o threshold seria escolhido por critério de negócio (custo
     de investigar um falso positivo vs. custo de deixar passar uma fraude).

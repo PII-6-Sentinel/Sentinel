@@ -291,8 +291,9 @@ def test_verdict_shows_level_action_scores_reasons_map_and_customer_history(page
     _analyze(page, sim.SCENARIO_ATYPICAL_AMOUNT)
     entry = page.session_state[VERDICT]
     a, ctx = entry["result"].assessment, entry["result"].context
+    banner = next(m.value for m in page.markdown if 'class="sx-verdict"' in m.value)
+    assert ui.ACTION_LABEL[a.action] in banner and f"nível {a.level}" in banner
     cards = " ".join(m.value for m in page.markdown if "metric-card" in m.value)
-    assert "Ação recomendada" in cards and f"nível {a.level}" in cards
     assert "Score do ML" in cards and "Score das regras" in cards
     assert f">{a.ml_score:.0f}<" in cards and f">{a.behavior_score:.0f}<" in cards
     text = _texts(page)
@@ -345,6 +346,7 @@ def test_page_verdict_equals_score_new_transaction(page, db):
         reference = score_new_transaction(
             s, engine, customer_id=form.customer_id, amount=form.amount, lat=city.lat, lon=city.lon,
             timestamp=form.timestamp, device_id=None if form.device_id == sim.NEW_DEVICE else form.device_id, city=form.city,
+            channel=form.channel, payment_method=form.payment_method,
         )
     assert entry["result"].assessment == reference
 

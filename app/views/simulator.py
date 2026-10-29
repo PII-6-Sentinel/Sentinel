@@ -42,8 +42,9 @@ from simulator import (
 )
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-from theme import ACCENT, LEVEL_COLORS, RISK_HIGH, RISK_MEDIUM, TEXT, TEXT_SECONDARY, apply_plotly_theme
+from theme import ACCENT, LEVEL_COLORS, LEVEL_TINTS, RISK_HIGH, RISK_MEDIUM, TEXT, TEXT_SECONDARY, apply_plotly_theme
 from ui import (
+    CHART_CONFIG,
     ACTION_LABEL,
     PROTOTYPE_NOTICE,
     card,
@@ -141,12 +142,11 @@ def _context_caption(ctx: CustomerContext) -> str:
 def _customer_panel(ctx: CustomerContext) -> str:
     cities = ", ".join(f"{esc(c)} ({n})" for c, n in sorted(ctx.city_counts.items(), key=lambda kv: (-kv[1], kv[0])))
     trusted = sum(d.is_trusted for d in ctx.devices)
-    observed = f" (média observada: {fmt_brl(ctx.observed_avg_amount)})" if ctx.observed_avg_amount else ""
     body = kv_table(
         [
             ("Cliente", f"{esc(ctx.name)} (#{ctx.customer_id}) — perfil {esc(ctx.profile)}"),
             ("Cidade natal", esc(ctx.home_city)),
-            ("Transações", f"{ctx.n_transactions}; valor médio do cliente {fmt_brl(ctx.avg_amount_baseline)}{observed}"),
+            ("Transações", f"{ctx.n_transactions}; valor médio do cliente {fmt_brl(ctx.avg_amount_baseline)} (das compras anteriores)"),
             ("Janela habitual", ctx.window),
             ("Cidades conhecidas", cities or "nenhuma"),
             ("Dispositivos", f"{len(ctx.devices)} ({trusted} confiáveis)"),
@@ -244,7 +244,7 @@ def _run_simulation(session: Session, form: FormValues) -> None:
             status.update(label="Não foi possível analisar", state="error")
             st.write(str(exc))
             return
-        status.update(label="Raciocínio do Sentinel — análise concluída", state="complete", expanded=True)
+        status.update(label="Como o Sentinel decidiu — clique para ver o passo a passo", state="complete", expanded=False)
 
     st.session_state[VERDICT_KEY] = {
         "result": result,
@@ -314,12 +314,33 @@ def _render_log(entry: dict) -> None:
     result: SimulationResult = entry["result"]
     total = sum(s.seconds for s in result.steps if s.seconds is not None)
     with st.status(
-        f"Raciocínio do Sentinel — análise concluída ({fmt_seconds(total)} nas etapas de cálculo)",
+        f"Como o Sentinel decidiu — clique para ver o passo a passo ({fmt_seconds(total)} nas etapas de cálculo)",
         state="complete",
         expanded=False,
     ):
         for line in entry["lines"]:
             st.write(line)
+
+
+def _verdict_banner(a) -> str:
+    """Faixa do veredito, na cor do nível: a ação em destaque, o score e os
+    principais motivos — o que a banca precisa ver primeiro.
+    """
+    color = LEVEL_COLORS[a.level]
+    tint = LEVEL_TINTS[a.level]
+    if a.reasons:
+        why = " · ".join(esc(r) for r in a.reasons[:3])
+        if len(a.reasons) > 3:
+            why += f" · +{len(a.reasons) - 3}"
+    else:
+        why = "Nenhum sinal relevante: a transação está dentro do padrão do cliente."
+    return (
+        f'<div class="sx-verdict" style="--lvl:{color}; --lvl-tint:{tint}">'
+        f'<div class="sx-verdict-score"><span>{a.risk_score}</span><small>Risk Score</small></div>'
+        f'<div class="sx-verdict-body"><div class="sx-verdict-action">{esc(ACTION_LABEL[a.action])}</div>'
+        f'<div class="sx-verdict-desc">{level_badge(a.level)} {esc(ACTION_DESCRIPTION[a.action].capitalize())}</div>'
+        f'<div class="sx-verdict-why">{why}</div></div></div>'
+    )
 
 
 def _render_verdict(entry: dict, just_ran: bool) -> None:
@@ -334,32 +355,26 @@ def _render_verdict(entry: dict, just_ran: bool) -> None:
         f"dispositivo: {'novo, não reconhecido' if form.device_id == NEW_DEVICE else f'#{form.device_id}'} · "
         f"{CHANNEL_OPTIONS[(form.channel, form.payment_method)].lower()}"
     )
-    if not just_ran:  # logo após o clique, o status ao vivo já está na tela
-        _render_log(entry)
+    st.markdown(_verdict_banner(a), unsafe_allow_html=True)
 
     left, right = st.columns([1.1, 1], gap="medium")
     with left:
         with st.container(key="sx-panel-gauge"):
-            st.plotly_chart(_gauge(a.risk_score, a.level), key="sim_gauge", theme=None)
+            st.plotly_chart(_gauge(a.risk_score, a.level), key="sim_gauge", theme=None, config=CHART_CONFIG)
     with right:
+        # A ação já está na faixa acima; aqui, de onde veio o score.
+        st.markdown(
+            card("Score do ML", f"{a.ml_score:.0f}", f"peso {fmt_pct(cfg.ml_weight, 0)} no Risk Score", size="sm", dot=False),
+            unsafe_allow_html=True,
+        )
         st.markdown(
             card(
-                "Ação recomendada",
-                ACTION_LABEL[a.action],
-                f"{level_badge(a.level)}<br>{ACTION_DESCRIPTION[a.action].capitalize()}",
-                color,
-                value_color=color,
+                "Score das regras",
+                f"{a.behavior_score:.0f}",
+                f"peso {fmt_pct(cfg.behavior_weight, 0)} no Risk Score",
                 size="sm",
+                dot=False,
             ),
-            unsafe_allow_html=True,
-        )
-        c1, c2 = st.columns(2, gap="small")
-        c1.markdown(
-            card("Score do ML", f"{a.ml_score:.0f}", f"peso {fmt_pct(cfg.ml_weight, 0)}", size="xs", dot=False),
-            unsafe_allow_html=True,
-        )
-        c2.markdown(
-            card("Score das regras", f"{a.behavior_score:.0f}", f"peso {fmt_pct(cfg.behavior_weight, 0)}", size="xs", dot=False),
             unsafe_allow_html=True,
         )
     st.caption(
@@ -375,9 +390,12 @@ def _render_verdict(entry: dict, just_ran: bool) -> None:
     with map_col:
         with st.container(key="sx-panel-map"):
             st.markdown('<div class="sx-panel-title">Residência e local da compra</div>', unsafe_allow_html=True)
-            st.plotly_chart(location_map(result.map_row), key="sim_map", theme=None)
+            st.plotly_chart(location_map(result.map_row), key="sim_map", theme=None, config=CHART_CONFIG)
     with hist_col:
         st.markdown(_customer_panel(ctx), unsafe_allow_html=True)
+
+    if not just_ran:  # logo após o clique, o status ao vivo já está logo abaixo
+        _render_log(entry)
 
 
 # ----------------------------------------------------------------------
@@ -483,6 +501,9 @@ def _render(session: Session) -> None:
 
         run = st.button(RUN_LABEL, type="primary", key="sim_run", disabled=error is not None)
 
+    # O veredito vai num espaço reservado ACIMA do status: a análise roda e
+    # mostra as etapas, e o resultado aparece em cima; o passo a passo recolhe.
+    verdict_slot = st.container()
     just_ran = False
     if run and error is None:
         _run_simulation(session, form)
@@ -501,7 +522,8 @@ def _render(session: Session) -> None:
                 unsafe_allow_html=True,
             )
     else:
-        _render_verdict(entry, just_ran)
+        with verdict_slot:
+            _render_verdict(entry, just_ran)
 
     _render_history()
 

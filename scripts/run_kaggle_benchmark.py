@@ -40,8 +40,9 @@ def title(text: str) -> None:
     print(f"\n{LINE}\n{text}\n{LINE}")
 
 
-def brl(value: float) -> str:
-    return "R$ " + f"{value:,.2f}".replace(",", "#").replace(".", ",").replace("#", ".")
+def eur(value: float) -> str:
+    """`Amount` do Kaggle está na moeda dos cartões europeus (euro), não em reais."""
+    return "€ " + f"{value:,.2f}".replace(",", "#").replace(".", ",").replace("#", ".")
 
 
 def main(argv=None, path=RAW_DATA_PATH) -> int:
@@ -49,7 +50,7 @@ def main(argv=None, path=RAW_DATA_PATH) -> int:
     parser.add_argument("--teste", type=float, default=0.2, help="fração mais recente usada como teste (padrão 0,2)")
     parser.add_argument(
         "--custo-revisao", type=float, default=DEFAULT_REVIEW_COST,
-        help=f"custo de revisar um alerta, em R$ (padrão {DEFAULT_REVIEW_COST:g}; premissa, ajuste ao seu caso)",
+        help=f"custo de revisar um alerta, em € (padrão {DEFAULT_REVIEW_COST:g}; premissa, ajuste ao seu caso)",
     )  # fmt: skip
     args = parser.parse_args(argv)
 
@@ -88,14 +89,14 @@ def main(argv=None, path=RAW_DATA_PATH) -> int:
                 f"{r.precisao:9.1%} {r.recall:7.1%} {r.valor_fraude_coberto:14.1%}"
             )
 
-    title(f"3. Limiar por custo (revisão = {brl(args.custo_revisao)}; fraude perdida = o próprio valor)")
+    title(f"3. Limiar por custo (revisão = {eur(args.custo_revisao)}; fraude perdida = o próprio valor)")
     no_alert = float(amount[y_test == 1].sum())
-    print(f"  Sem nenhum alerta, o prejuízo seria {brl(no_alert)} (todas as fraudes do teste).")
+    print(f"  Sem nenhum alerta, o prejuízo seria {eur(no_alert)} (todas as fraudes do teste).")
     for model, score in scores.items():
         best = cost_optimal_threshold(cost_curve(y_test, score, amount, review_cost=args.custo_revisao))
         print(
             f"  {model:22s} {int(best.alertas):6d} alertas · {int(best.fn):3d} fraudes perdidas · "
-            f"custo {brl(best.custo_total)} ({best.custo_total / no_alert:.0%} do prejuízo sem alertas)"
+            f"custo {eur(best.custo_total)} ({best.custo_total / no_alert:.0%} do prejuízo sem alertas)"
         )
     print("  ATENÇÃO: o limiar ótimo foi achado no próprio teste, para DESCREVER a curva de\n"
           "  custo. Para decidir um limiar, calcule-o num período de validação anterior.")  # fmt: skip

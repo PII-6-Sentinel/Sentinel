@@ -8,12 +8,14 @@ sutilmente diferente, o que invalidaria a comparação entre eles.
 
 Ordem das operações (importante para não vazar dados de teste no treino):
     1. split treino/teste (estratificado, preserva a proporção de fraudes)
-    2. escalonar Time/Amount (fit só no treino)
+    2. features: `Time` vira hora do dia e `Amount` é padronizado (fit só
+       no treino) — `prepare_features`
     3. balancear classes (SMOTE/undersampling) — SÓ no treino
 """
 
 from typing import Literal
 
+import numpy as np
 import pandas as pd
 from imblearn.over_sampling import SMOTE
 from imblearn.under_sampling import RandomUnderSampler
@@ -21,6 +23,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
 TARGET_COLUMN = "Class"
+TIME_COLUMN = "Time"
+SECONDS_PER_DAY = 24 * 3600
 BalanceMethod = Literal["smote", "undersample", "none"]
 
 
@@ -61,12 +65,8 @@ def get_train_test_split(
 ):
     """Fonte única de verdade do split treino/teste do projeto.
 
-    Antes desta função, `app/pipeline.py` chamava `split_features_target` +
-    `train_test_split_stratified` de forma duplicada em `get_pipeline()`
-    (resultado final) e `get_cv_results()` (validação cruzada) — com o
-    mesmo `random_state`, o resultado já saía idêntico, mas a lógica de
-    montar o split estava escrita duas vezes. Agora os dois chamam só esta
-    função.
+    O resultado final no teste e a validação cruzada chamam só esta
+    função, para os dois partirem exatamente do mesmo split.
 
     Deliberadamente NÃO escalona nem balanceia — só separa
     features/alvo e faz o split estratificado. Cada consumidor decide o
@@ -100,12 +100,49 @@ def scale_amount_time(
     X_test = X_test.copy()
 
     scaler = StandardScaler()
-    cols_to_scale = ["Time", "Amount"]
+    # Só as que existirem: depois de `time_of_day_features`, `Time` já não
+    # está na tabela e só `Amount` é padronizado.
+    cols_to_scale = [c for c in ("Time", "Amount") if c in X_train.columns]
 
     X_train[cols_to_scale] = scaler.fit_transform(X_train[cols_to_scale])
     X_test[cols_to_scale] = scaler.transform(X_test[cols_to_scale])
 
     return X_train, X_test, scaler
+
+
+def time_of_day_features(X: pd.DataFrame) -> pd.DataFrame:
+    """Troca `Time` pela hora do dia, em coordenadas circulares
+    (`hour_sin`, `hour_cos`).
+
+    `Time` são segundos desde a PRIMEIRA transação do dataset, não um
+    horário: como feature, ele só diz "quão tarde no período de coleta" a
+    compra aconteceu. No split temporal isso é um problema, porque todo o
+    teste tem `Time` maior que qualquer valor do treino, e o modelo
+    extrapola (a Regressão Logística segue a reta do coeficiente; o
+    Isolation Forest trata o teste inteiro como borda da distribuição).
+    A hora do dia é o que `Time` tem de informativo e se repete entre
+    treino e teste. Seno/cosseno porque 23h e 0h estão a 1 hora uma da
+    outra, não a 23.
+
+    `Time` continua disponível no DataFrame original para ORDENAR o split
+    temporal; só não entra no modelo.
+    """
+    X = X.copy()
+    angle = 2 * np.pi * (X.pop(TIME_COLUMN) % SECONDS_PER_DAY) / SECONDS_PER_DAY
+    X["hour_sin"] = np.sin(angle)
+    X["hour_cos"] = np.cos(angle)
+    return X
+
+
+def prepare_features(
+    X_train: pd.DataFrame, X_test: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame, StandardScaler]:
+    """O que os modelos recebem: hora do dia no lugar de `Time`
+    (`time_of_day_features`) e `Amount` padronizado só com o treino
+    (`scale_amount_time`). Usado pelo teste final, pela validação cruzada e
+    pelo benchmark temporal, para todos verem as mesmas features.
+    """
+    return scale_amount_time(time_of_day_features(X_train), time_of_day_features(X_test))
 
 
 def balance_training_data(
@@ -158,7 +195,7 @@ def build_train_test_data(
     X_train, X_test, y_train, y_test = train_test_split_stratified(
         X, y, test_size=test_size, random_state=random_state
     )
-    X_train, X_test, _ = scale_amount_time(X_train, X_test)
+    X_train, X_test, _ = prepare_features(X_train, X_test)
     X_train, y_train = balance_training_data(
         X_train, y_train, method=balance_method, random_state=random_state
     )

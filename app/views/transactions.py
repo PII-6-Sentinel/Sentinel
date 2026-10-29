@@ -15,6 +15,7 @@ só há orquestração e exibição (componentes visuais em `app/ui.py`).
 """
 
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 from risk_analysis import (
     ACTIONS,
@@ -26,16 +27,20 @@ from risk_analysis import (
     AnalysisResult,
     DatabaseNotFound,
     apply_filters,
+    daily_levels,
     database_problem,
     efficiency,
     investigate,
+    model_weights,
     resolve_db_path,
     run_analysis,
     summarize,
+    top_suspects,
 )
-from simulator import CHANNEL_OPTIONS
-from theme import LEVEL_COLORS
+from simulator import CHANNEL_OPTIONS, fmt_hour
+from theme import LEVEL_COLORS, SURFACE, SURFACE_RAISED, TEXT, apply_plotly_theme
 from ui import (
+    CHART_CONFIG,
     ACTION_LABEL,
     PROTOTYPE_NOTICE,
     bar_rows,
@@ -170,28 +175,25 @@ def _render_summary(result: AnalysisResult) -> None:
     by_level, by_action = summary["por_nivel"], summary["por_acao"]
 
     st.subheader("Resumo da análise")
-    cols = st.columns(4)
-    cols[0].markdown(card("Transações analisadas", fmt_int(summary["total"]), "todos os clientes"), unsafe_allow_html=True)
-    for col, level in zip(cols[1:], LEVELS):
-        row = by_level.loc[level]
-        col.markdown(
-            card(f"Nível {level}", fmt_int(row["quantidade"]), f"{fmt_pct(row['percentual'])} das transações", LEVEL_COLORS[level]),
-            unsafe_allow_html=True,
-        )
-
-    cols = st.columns(4)
     flagged = by_action.loc[["revisar", "bloquear"]]
-    cols[0].markdown(
-        card("Sinalizadas (revisar + bloquear)", fmt_int(flagged["quantidade"].sum()), f"{fmt_pct(flagged['percentual'].sum())} das transações"),
-        unsafe_allow_html=True,
-    )
-    for col, action in zip(cols[1:], ACTIONS):
-        row = by_action.loc[action]
-        level = next(lv for lv in LEVELS if ACTION_BY_LEVEL[lv] == action)
-        col.markdown(
-            card(f"Ação: {ACTION_LABEL[action]}", fmt_int(row["quantidade"]), f"{fmt_pct(row['percentual'])} das transações", LEVEL_COLORS[level]),
-            unsafe_allow_html=True,
+    cards = [
+        card("Transações analisadas", fmt_int(summary["total"]), "todos os clientes", size="sm"),
+        card(
+            "Sinalizadas",
+            fmt_int(flagged["quantidade"].sum()),
+            f"{fmt_pct(flagged['percentual'].sum())} das transações (revisar + bloquear)",
+            size="sm",
+        ),
+    ]
+    # Nível e ação andam juntos (baixo → aprovar, ...): um cartão por par.
+    for level in LEVELS:
+        row = by_level.loc[level]
+        action = ACTION_LABEL[ACTION_BY_LEVEL[level]]
+        cards.append(
+            card(f"Nível {level} · {action}", fmt_int(row["quantidade"]), f"{fmt_pct(row['percentual'])} das transações", LEVEL_COLORS[level], size="sm")
         )
+    for col, html in zip(st.columns(5, gap="small"), cards):
+        col.markdown(html, unsafe_allow_html=True)
 
     cfg = result.engine.config
     st.caption(
@@ -202,6 +204,125 @@ def _render_summary(result: AnalysisResult) -> None:
         f"{result.customers_by_split[SPLIT_VALIDATION]} de validação, {result.customers_by_split[SPLIT_TEST]} de teste."
     )
     metrics_caveat()
+
+
+# ----------------------------------------------------------------------
+# painel: o que aconteceu no período, onde está o risco e os piores casos
+# ----------------------------------------------------------------------
+
+DASHBOARD_SUSPECTS = 5
+
+
+def _daily_chart(result: AnalysisResult) -> go.Figure:
+    """Transações por dia, empilhadas por nível de risco."""
+    daily = daily_levels(result.frame)
+    fig = go.Figure()
+    for level in LEVELS:
+        fig.add_trace(
+            go.Bar(
+                x=daily.index,
+                y=daily[level],
+                name=f"risco {level}",
+                marker=dict(color=LEVEL_COLORS[level]),
+                hovertemplate="%{x|%d/%m}: %{y} transações<extra>risco " + level + "</extra>",
+            )
+        )
+    apply_plotly_theme(fig)
+    fig.update_layout(
+        barmode="stack",
+        bargap=0.25,
+        height=300,
+        margin=dict(t=8, b=8, l=8, r=8),
+        legend=dict(orientation="h", y=-0.15, x=0),
+        yaxis=dict(automargin=True, title=None),
+    )
+    fig.update_xaxes(tickformat="%d/%m")
+    return fig
+
+
+def _risk_map(result: AnalysisResult) -> go.Figure:
+    """Onde aconteceram as transações de risco alto (tamanho = valor)."""
+    high = result.frame[result.frame["level"] == "alto"]
+    max_amount = max(float(high["amount"].max()) if len(high) else 1.0, 1.0)
+    fig = go.Figure(
+        go.Scattergeo(
+            lat=high["tx_lat"],
+            lon=high["tx_lon"],
+            mode="markers",
+            marker=dict(
+                size=8 + 20 * (high["amount"] / max_amount) ** 0.5,
+                color=LEVEL_COLORS["alto"],
+                opacity=0.75,
+                line=dict(width=1, color=TEXT),
+            ),
+            customdata=high[["transaction_id", "customer", "city", "amount", "risk_score"]].values,
+            hovertemplate="#%{customdata[0]} · %{customdata[1]}<br>%{customdata[2]} · R$ %{customdata[3]:,.2f}"
+            "<br>Risk Score %{customdata[4]}<extra></extra>",
+        )
+    )
+    fig.update_geos(
+        lataxis_range=[-40, 55],
+        lonaxis_range=[-95, 15],
+        showland=True,
+        landcolor=SURFACE_RAISED,
+        showocean=True,
+        oceancolor="#0A0A0B",
+        showcountries=True,
+        countrycolor=SURFACE,
+        coastlinecolor=SURFACE,
+        showlakes=False,
+        showframe=False,
+        bgcolor="rgba(0,0,0,0)",
+    )
+    apply_plotly_theme(fig)
+    fig.update_layout(height=300, margin=dict(t=0, b=0, l=0, r=0), showlegend=False)
+    return fig
+
+
+def _investigate_callback(transaction_id: int) -> None:
+    """Botão "Investigar" de um caso suspeito: preenche a busca por ID."""
+    st.session_state["tx_lookup"] = str(transaction_id)
+
+
+def _suspect_card(result: AnalysisResult, row) -> str:
+    a = investigate(result, int(row["transaction_id"])).assessment
+    color = LEVEL_COLORS[a.level]
+    # O motivo do ML ("padrão semelhante a fraudes") aparece em quase todos;
+    # no cartão vale mais mostrar os sinais específicos do caso.
+    specific = [r for r in a.reasons if not r.startswith("Modelo estatístico")] or a.reasons
+    reasons = "".join(f"<li>{esc(r)}</li>" for r in specific[:2])
+    return (
+        f'<div class="sx-suspect" style="--lvl:{color}">'
+        f'<div class="sx-suspect-score">{a.risk_score}</div>'
+        f'<div class="sx-suspect-who">{esc(row["customer"])}</div>'
+        f'<div class="sx-suspect-what">{fmt_brl(row["amount"])} · {esc(row["city"])}<br>'
+        f'{pd.Timestamp(row["timestamp"]):%d/%m %H:%M} · {ACTION_LABEL[a.action]}</div>'
+        f'<ul>{reasons}</ul></div>'
+    )
+
+
+def _render_dashboard(result: AnalysisResult) -> None:
+    left, right = st.columns([1.3, 1], gap="medium")
+    with left:
+        with st.container(key="sx-panel-daily"):
+            st.markdown('<div class="sx-panel-title">Transações por dia, por nível de risco</div>', unsafe_allow_html=True)
+            st.plotly_chart(_daily_chart(result), key="tx_daily", theme=None, config=CHART_CONFIG)
+    with right:
+        with st.container(key="sx-panel-riskmap"):
+            st.markdown('<div class="sx-panel-title">Onde estão os casos de risco alto</div>', unsafe_allow_html=True)
+            st.plotly_chart(_risk_map(result), key="tx_riskmap", theme=None, config=CHART_CONFIG)
+
+    st.markdown(f'<div class="sx-section-title">Os {DASHBOARD_SUSPECTS} casos mais suspeitos</div>', unsafe_allow_html=True)
+    for col, (_, row) in zip(st.columns(DASHBOARD_SUSPECTS, gap="small"), top_suspects(result.frame, DASHBOARD_SUSPECTS).iterrows()):
+        with col:
+            st.markdown(_suspect_card(result, row), unsafe_allow_html=True)
+            st.button(
+                "Investigar",
+                key=f"tx_suspect_{int(row['transaction_id'])}",
+                on_click=_investigate_callback,
+                args=(int(row["transaction_id"]),),
+                width="stretch",
+            )
 
 
 # ----------------------------------------------------------------------
@@ -341,8 +462,12 @@ def _render_investigation(result: AnalysisResult, transaction_id: int) -> None:
     with right:
         with st.container(key="sx-panel-map"):
             st.markdown('<div class="sx-panel-title">Residência e local da compra</div>', unsafe_allow_html=True)
-            st.plotly_chart(location_map(row), key="tx_map", theme=None)
-        window = f"{int(row['typical_hour_start'])}h–{int(row['typical_hour_end'])}h"
+            st.plotly_chart(location_map(row), key="tx_map", theme=None, config=CHART_CONFIG)
+        # Hábito estimado só com as compras ANTERIORES a esta — o mesmo com
+        # que o motor a comparou. Vazio nas primeiras compras do cliente.
+        known = pd.notna(row["habit_avg_amount"])
+        habit_amount = fmt_brl(row["habit_avg_amount"]) if known else "sem histórico suficiente"
+        window = f"{fmt_hour(row['habit_hour_start'])}–{fmt_hour(row['habit_hour_end'])}" if known else "sem histórico suficiente"
         st.markdown(
             panel(
                 "Ficha da transação",
@@ -352,7 +477,7 @@ def _render_investigation(result: AnalysisResult, transaction_id: int) -> None:
                         (
                             "Valor",
                             f"{fmt_brl(row['amount'])}"
-                            f'<div class="k">média habitual do cliente: {fmt_brl(row["avg_amount_baseline"])}</div>',
+                            f'<div class="k">média habitual do cliente: {habit_amount}</div>',
                         ),
                         ("Cidade da compra", f"{esc(row['city'])} — {esc(row['merchant'])}"),
                         (
@@ -408,7 +533,6 @@ def _render_efficiency(result: AnalysisResult) -> None:
         card("Precisão da sinalização", fmt_pct(m["precision"]), "das sinalizadas, eram fraude", size="sm"),
         unsafe_allow_html=True,
     )
-    metrics_caveat()
 
     left, right = st.columns([1.1, 1], gap="medium")
     with left:
@@ -446,6 +570,30 @@ def _render_efficiency(result: AnalysisResult) -> None:
             ),
             unsafe_allow_html=True,
         )
+
+
+def _render_model(result: AnalysisResult) -> None:
+    weights = model_weights(result)
+    strongest = max(abs(v) for _, v in weights) or 1.0
+    st.subheader("O que o modelo de ML aprendeu")
+    st.caption(
+        "Pesos que a Regressão Logística aprendeu SOZINHA com as transações de treino: ninguém os escreveu. "
+        "Quanto maior a barra, mais a característica move o score de ML; positivo aumenta o risco, negativo "
+        "diminui. As características estão padronizadas, então os pesos são comparáveis entre si. Como os "
+        "dados são simulados, os pesos mostram o que distingue as fraudes DESTA simulação."
+    )
+    st.markdown(
+        panel(
+            "Peso de cada característica no score de ML",
+            bar_rows(
+                [
+                    (label, "aumenta o risco" if value > 0 else "diminui o risco", abs(value) / strongest, f"{value:+.2f}".replace(".", ","))
+                    for label, value in weights
+                ]
+            ),
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 # ----------------------------------------------------------------------
@@ -491,6 +639,7 @@ def render():
         _render_step_log(result)
 
     _render_summary(result)
+    _render_dashboard(result)
 
     st.subheader("Transações")
     view = _render_filters(result).reset_index(drop=True)
@@ -518,4 +667,5 @@ def render():
         st.info("Selecione uma transação na tabela para abrir o painel de investigação.", icon=":material/search:")
 
     _render_efficiency(result)
+    _render_model(result)
 

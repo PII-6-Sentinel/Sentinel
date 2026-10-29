@@ -17,7 +17,9 @@ módulo acrescenta três análises, sem alterar as existentes:
    que minimiza o custo esperado = revisões × custo de revisão + valor das
    fraudes não detectadas.
 
-Reusa `train_all_models`, `fraud_score` e `scale_amount_time` como estão.
+Reusa `train_all_models`, `fraud_score` e `prepare_features` como estão.
+`Time` só ORDENA o split temporal: o modelo recebe a hora do dia, não o
+`Time` bruto (ver `time_of_day_features`).
 Como o resto da avaliação no Kaggle, nenhum limiar é escolhido olhando o
 teste: o limiar por custo é calculado no próprio conjunto em que é
 aplicado só para DESCREVER a curva de custo; para decidir, use um conjunto
@@ -31,7 +33,7 @@ import pandas as pd
 from sklearn.metrics import average_precision_score, roc_auc_score
 
 from src.models import fraud_score, train_all_models
-from src.preprocessing import get_train_test_split, scale_amount_time, split_features_target
+from src.preprocessing import get_train_test_split, prepare_features, split_features_target
 
 TIME_COLUMN = "Time"
 AMOUNT_COLUMN = "Amount"
@@ -40,8 +42,9 @@ SECONDS_PER_DAY = 24 * 3600
 # Orçamentos de alerta: fração das transações que viram alerta (revisão).
 DEFAULT_ALERT_RATES = (0.001, 0.0025, 0.005, 0.01, 0.02, 0.05)
 
-# Custo de revisar um alerta (R$): ordem de grandeza de alguns minutos de um
-# analista. É uma premissa declarada, não um dado — passe o seu valor.
+# Custo de revisar um alerta, na moeda do dataset (euro: cartões europeus):
+# ordem de grandeza de alguns minutos de um analista. É uma premissa
+# declarada, não um dado — passe o seu valor.
 DEFAULT_REVIEW_COST = 5.0
 
 
@@ -59,7 +62,7 @@ def temporal_split(df: pd.DataFrame, test_size: float = 0.2):
 
 
 def _scores(X_train, X_test, y_train) -> dict[str, np.ndarray]:
-    X_train_s, X_test_s, _ = scale_amount_time(X_train, X_test)
+    X_train_s, X_test_s, _ = prepare_features(X_train, X_test)
     models = train_all_models(X_train_s, y_train)
     return {name: fraud_score(model, X_test_s) for name, model in models.items()}
 

@@ -45,7 +45,7 @@ def _print_summary(summary: dict) -> None:
     print("\nExemplos de transações fraudulentas:")
     for ex in summary["example_frauds"]:
         print(f"\n  [{ex['scenario']}] cliente: {ex['customer']} ({ex['profile']})")
-        print(f"    Valor: R$ {ex['amount']:.2f}  (média do cliente: R$ {ex['avg_amount_baseline']:.2f})")
+        print(f"    Valor: R$ {ex['amount']:.2f}  (média do perfil no gerador: R$ {ex['avg_amount_baseline']:.2f})")
         print(f"    Cidade natal: {ex['home_city']}  ->  transação em: {ex['merchant_city']}")
         print(f"    Distância de casa: {ex['distance_from_home_km']:.1f} km")
         print(f"    Data/hora: {ex['timestamp']}")

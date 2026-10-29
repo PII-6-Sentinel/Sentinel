@@ -363,3 +363,56 @@ hr { border-color: var(--divider) !important; }
 /* tabelas HTML: só divisores horizontais */
 .sx-table, .sx-table th, .sx-table td, .sx-table tr { border-left: 0 !important; border-right: 0 !important; background: transparent; }
 .sx-table th { border-top: 0 !important; }
+
+/* ---------- Visão Geral: transação de exemplo ao lado do texto ---------- */
+.sx-demo {
+  background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--lvl);
+  border-radius: var(--radius-card); padding: 24px; margin-top: 8px;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.45);
+}
+.sx-demo-head { display: flex; justify-content: space-between; font-size: 13px; color: var(--text-secondary); }
+.sx-demo-live { color: var(--lvl); font-weight: 600; }
+.sx-demo-who { font-size: 18px; font-weight: 600; color: var(--text); margin-top: 14px; }
+.sx-demo-what { font-size: 14px; line-height: 21px; color: var(--text-secondary); margin-top: 4px; }
+.sx-demo-verdict {
+  display: flex; align-items: center; gap: 20px; margin: 20px 0 16px; padding: 16px 20px;
+  border-radius: var(--radius-cell); background: rgba(255,107,87,0.12);
+}
+.sx-demo-score { font-size: 52px; line-height: 48px; font-weight: 700; letter-spacing: -0.03em; color: var(--lvl); }
+.sx-demo-score small, .sx-demo-action small {
+  display: block; font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: 0; color: var(--text-secondary); margin-top: 6px;
+}
+.sx-demo-action { font-size: 28px; line-height: 30px; font-weight: 700; color: var(--lvl); }
+.sx-demo-reasons { list-style: none; padding: 0; margin: 0; }
+.sx-demo-reasons li {
+  position: relative; padding: 7px 0 7px 18px; font-size: 14px; line-height: 20px; color: var(--text);
+  border-top: 1px solid var(--divider);
+}
+.sx-demo-reasons li::before {
+  content: ""; position: absolute; left: 2px; top: 14px; width: 7px; height: 7px; border-radius: 50%; background: var(--lvl);
+}
+.sx-demo-foot { font-size: 12px; color: var(--text-secondary); margin-top: 12px; }
+
+/* ---------- Central: os casos mais suspeitos ---------- */
+.sx-section-title { font-size: 17px; line-height: 24px; font-weight: 600; color: var(--text); margin: 8px 0 12px; }
+.sx-suspect {
+  background: var(--surface); border: 1px solid var(--border); border-top: 3px solid var(--lvl);
+  border-radius: var(--radius-card); padding: 18px; min-height: 262px; box-sizing: border-box;
+}
+.sx-suspect-score { font-size: 40px; line-height: 40px; font-weight: 700; letter-spacing: -0.03em; color: var(--lvl); }
+.sx-suspect-who { font-size: 15px; font-weight: 600; color: var(--text); margin-top: 10px; }
+.sx-suspect-what { font-size: 13px; line-height: 19px; color: var(--text-secondary); margin-top: 2px; }
+.sx-suspect ul { list-style: none; padding: 0; margin: 10px 0 0; }
+.sx-suspect li { font-size: 12px; line-height: 17px; color: var(--text); padding: 5px 0; border-top: 1px solid var(--divider); }
+
+/* ---------- Simulador: faixa do veredito ---------- */
+.sx-verdict {
+  display: flex; align-items: center; gap: 32px; margin: 8px 0 20px; padding: 28px 32px;
+  background: var(--lvl-tint); border: 1px solid var(--lvl); border-radius: var(--radius-card);
+}
+.sx-verdict-score span { display: block; font-size: 72px; line-height: 64px; font-weight: 700; letter-spacing: -0.04em; color: var(--lvl); }
+.sx-verdict-score small { display: block; font-size: 13px; color: var(--text-secondary); margin-top: 6px; text-align: center; }
+.sx-verdict-action { font-size: 40px; line-height: 44px; font-weight: 700; color: var(--lvl); }
+.sx-verdict-desc { font-size: 15px; color: var(--text); margin-top: 4px; }
+.sx-verdict-why { font-size: 14px; line-height: 21px; color: var(--text-secondary); margin-top: 10px; }
+@media (max-width: 700px) { .sx-verdict { flex-direction: column; align-items: flex-start; gap: 12px; } }

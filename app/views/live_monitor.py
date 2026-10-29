@@ -21,6 +21,7 @@ orquestração e exibição. Nada é gravado no banco: o fluxo vive só em
 `st.session_state`.
 """
 
+import math
 import random
 
 import pandas as pd
@@ -55,6 +56,7 @@ from theme import (
     apply_plotly_theme,
 )
 from ui import (
+    CHART_CONFIG,
     ACTION_LABEL,
     PROTOTYPE_NOTICE,
     card,
@@ -364,8 +366,12 @@ def _hbar(labels, values, color: str, text=None) -> go.Figure:
         )
     )
     apply_plotly_theme(fig)
-    fig.update_layout(height=max(220, 44 * len(labels) + 60), margin=dict(t=8, b=32, l=8, r=16), showlegend=False)
+    # Barras de espessura fixa: com 1 ou 2 categorias, a altura mínima
+    # antiga virava um bloco que ocupava o painel inteiro.
+    fig.update_layout(height=60 + 40 * len(labels), bargap=0.35, margin=dict(t=8, b=32, l=8, r=16), showlegend=False)
     fig.update_yaxes(automargin=True)
+    # Contagens: ticks inteiros (com "d" sozinho, 0,5 virava "1" repetido).
+    fig.update_xaxes(rangemode="tozero", tickformat="d", dtick=max(1, math.ceil(max(values, default=1) / 5)))
     return fig
 
 
@@ -381,9 +387,8 @@ def _quality(s: dict, events: list[LiveEvent]) -> None:
             st.markdown('<div class="sx-panel-title">Chamadas de fraudulentas, por cenário real</div>', unsafe_allow_html=True)
             table = scenario_detection(events)
             text = [f"{r.Sinalizadas} de {r.Total} ({fmt_pct(r.Taxa, 0)})" for r in table.itertuples()]
-            st.plotly_chart(_hbar(table["Cenário"], table["Sinalizadas"], ACCENT, text), key="live_scenarios", theme=None)
+            st.plotly_chart(_hbar(table["Cenário"], table["Sinalizadas"], ACCENT, text), key="live_scenarios", theme=None, config=CHART_CONFIG)
             st.caption('Em "Compra normal", cada uma é um alarme falso; nos demais, uma fraude capturada.')
-    metrics_caveat()
 
 
 def _reasons(events: list[LiveEvent]) -> None:
@@ -393,7 +398,7 @@ def _reasons(events: list[LiveEvent]) -> None:
         if counts.empty:
             st.caption("Nenhuma transação chamada de fraudulenta ainda.")
         else:
-            st.plotly_chart(_hbar(counts.index, counts.values, RISK_HIGH), key="live_reasons", theme=None)
+            st.plotly_chart(_hbar(counts.index, counts.values, RISK_HIGH), key="live_reasons", theme=None, config=CHART_CONFIG)
 
 
 def _style_feed(display: pd.DataFrame) -> pd.DataFrame:
@@ -458,11 +463,11 @@ def _dashboard(running: bool) -> None:
     with map_col:
         with st.container(key="sx-panel-live-map"):
             st.markdown('<div class="sx-panel-title">Onde as compras aconteceram</div>', unsafe_allow_html=True)
-            st.plotly_chart(_map(frame), key="live_map", theme=None)
+            st.plotly_chart(_map(frame), key="live_map", theme=None, config=CHART_CONFIG)
     with line_col:
         with st.container(key="sx-panel-live-timeline"):
             st.markdown('<div class="sx-panel-title">Risk Score ao longo do fluxo</div>', unsafe_allow_html=True)
-            st.plotly_chart(_timeline(frame), key="live_timeline", theme=None)
+            st.plotly_chart(_timeline(frame), key="live_timeline", theme=None, config=CHART_CONFIG)
 
     _quality(summary, events)
     _reasons(events)

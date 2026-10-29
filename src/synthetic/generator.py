@@ -392,10 +392,14 @@ def _build_customer_bundles(
             # Minuto único por cliente: dois estabelecimentos no MESMO minuto
             # (a até ~15 km um do outro) implicariam ~900 km/h — um falso
             # positivo de "viagem impossível" que não é comportamento real.
+            # Sem minuto livre em 10 tentativas, a compra é descartada (nunca
+            # repetida); com a seed padrão isso não acontece.
             for _attempt in range(10):
                 timestamp = _timestamp_on_day(rng, customer, day)
                 if timestamp not in used_minutes:
                     break
+            else:
+                continue
             used_minutes.add(timestamp)
 
             merchant = rng.choice(merchants_by_city[city_ref.city])
@@ -410,6 +414,76 @@ def _build_customer_bundles(
         bundles.append(bundle)
 
     return bundles
+
+
+# ---------------------------------------------------------------------------
+# Ruído legítimo: clientes reais nem sempre seguem o próprio hábito
+# ---------------------------------------------------------------------------
+
+# Sem isto, toda compra legítima fica dentro da janela de horário, perto da
+# média e num dispositivo já conhecido — e cada cenário de fraude vira uma
+# coluna que separa as classes sozinha. Com o ruído, os sinais de fraude
+# também aparecem (mais fracos e mais raros) em compras legítimas, como na
+# operação real: o modelo precisa COMBINAR sinais, não ler um só.
+#
+# Fração das compras normais feitas num horário qualquer do dia (insônia,
+# plantão, compra por impulso de madrugada).
+LEGIT_OFF_HOURS_PROB = 0.04
+# Fração das compras normais bem acima da média (eletrodoméstico, viagem,
+# presente): 2,5x a 8x a média do cliente. A fraude de valor atípico vai de
+# 6x a 15x — as duas faixas se sobrepõem de propósito.
+LEGIT_LARGE_PURCHASE_PROB = 0.03
+LEGIT_LARGE_PURCHASE_RATIO = (2.5, 8.0)
+# Fração dos clientes que trocam de celular no meio do histórico. Metade dos
+# aparelhos novos ainda não foi verificada pelo banco (não confiável) — o
+# mesmo sinal do cenário "dispositivo_novo", só que legítimo.
+LEGIT_NEW_DEVICE_PROB = 0.25
+LEGIT_NEW_DEVICE_TRUSTED_PROB = 0.5
+LEGIT_NEW_DEVICE_USE_PROB = 0.6  # depois da troca, fração das compras no aparelho novo
+
+# Semente própria (derivada da principal), como a do canal: aplicar o ruído
+# com outro gerador mantém o sorteio das compras e das fraudes da semente
+# principal.
+NOISE_SEED_OFFSET = 2_000
+
+
+def add_legit_noise(bundles: list[_CustomerBundle], seed: int = DEFAULT_SEED) -> None:
+    """Aplica o ruído legítimo às compras NORMAIS de cada cliente (in-place,
+    determinístico). Roda antes da injeção das fraudes, que então checam
+    conflito de horário contra as compras já com ruído.
+    """
+    rng = random.Random(seed + NOISE_SEED_OFFSET)
+    for bundle in bundles:
+        customer = bundle.customer
+        used_minutes = {t.timestamp for t in bundle.transactions}
+        for tx in bundle.transactions:
+            if rng.random() < LEGIT_OFF_HOURS_PROB:
+                day = tx.timestamp.date()
+                moment = datetime(day.year, day.month, day.day, rng.randint(0, 23), rng.randint(0, 59))
+                if moment not in used_minutes:
+                    used_minutes.discard(tx.timestamp)
+                    used_minutes.add(moment)
+                    tx.timestamp = moment
+            if rng.random() < LEGIT_LARGE_PURCHASE_PROB:
+                tx.amount = round(customer.avg_amount_baseline * rng.uniform(*LEGIT_LARGE_PURCHASE_RATIO), 2)
+        bundle.transactions.sort(key=lambda t: t.timestamp)
+
+        if len(bundle.transactions) >= 2 and rng.random() < LEGIT_NEW_DEVICE_PROB:
+            cut = rng.randint(len(bundle.transactions) // 2, len(bundle.transactions) - 1)
+            first = bundle.transactions[cut]
+            device = Device(
+                customer=customer,
+                device_type=DeviceType.MOBILE,
+                first_seen_at=first.timestamp,
+                is_trusted=rng.random() < LEGIT_NEW_DEVICE_TRUSTED_PROB,
+            )
+            # Fora de `devices`: as fraudes não sorteiam um aparelho que, no
+            # momento delas, talvez ainda nem existisse.
+            bundle.extra_devices.append(device)
+            first.device = device
+            for tx in bundle.transactions[cut + 1 :]:
+                if rng.random() < LEGIT_NEW_DEVICE_USE_PROB:
+                    tx.device = device
 
 
 # ---------------------------------------------------------------------------
@@ -668,6 +742,11 @@ CONTACTLESS_SHARE_RANGE = (0.40, 0.90)
 # compra por aplicativo/site: sempre online.
 FRAUD_PIN_KNOWN_PROB = 0.25
 FRAUD_ONLINE_PROB = 0.5
+# Fração das fraudes (fora "dispositivo_novo") cujo canal imita o hábito do
+# titular: o fraudador que sabe como a vítima compra, ou o golpe por canal
+# indiferente. Sem isso, o canal seria um atalho para o rótulo — quase toda
+# fraude fugiria do hábito e quase nenhuma compra legítima.
+FRAUD_MIMICS_HABIT_PROB = 0.5
 
 # Semente própria (derivada da principal): sortear o canal DEPOIS de gerar
 # tudo, com outro gerador, mantém idênticas as transações das etapas
@@ -681,7 +760,7 @@ def assign_channels(dataset: GeneratedDataset, seed: int = DEFAULT_SEED) -> None
 
     Normais seguem o hábito do cliente; acima de `CONTACTLESS_LIMIT_BRL` a
     compra presencial é sempre com senha. Fraudes seguem a lógica do golpe
-    (ver `FRAUD_PIN_KNOWN_PROB` e `FRAUD_ONLINE_PROB`). O rótulo é usado aqui só
+    (ver `FRAUD_PIN_KNOWN_PROB`, `FRAUD_ONLINE_PROB` e `FRAUD_MIMICS_HABIT_PROB`). O rótulo é usado aqui só
     para GERAR os dados — nunca chega às features.
     """
     rng = random.Random(seed + CHANNEL_SEED_OFFSET)
@@ -698,9 +777,13 @@ def pick_channel(
     rng: random.Random, customer: Customer, amount: float, fraud_scenario: str | None
 ) -> tuple[str, str | None]:
     """(canal, forma de pagamento) de UMA transação: `fraud_scenario` None
-    = compra normal, que segue o hábito do cliente; senão, a lógica do golpe.
+    = compra normal, que segue o hábito do cliente; senão, a lógica do golpe
+    — exceto numa fração `FRAUD_MIMICS_HABIT_PROB`, que também segue o hábito.
     Usada pelo gerador do banco e pelo gerador ao vivo (`live_generator`).
     """
+    if fraud_scenario is not None and fraud_scenario != FraudScenario.DISPOSITIVO_NOVO.value:
+        if rng.random() < FRAUD_MIMICS_HABIT_PROB:
+            fraud_scenario = None  # segue o hábito do titular, como uma compra normal
     if fraud_scenario == FraudScenario.DISPOSITIVO_NOVO.value:
         online, contactless = True, False
     elif fraud_scenario is not None and rng.random() < FRAUD_PIN_KNOWN_PROB:
@@ -739,6 +822,7 @@ def generate_dataset(
         merchants_by_city[m.city].append(m)
 
     bundles = _build_customer_bundles(rng, n_customers, merchants_by_city, reference_end)
+    add_legit_noise(bundles, seed)
 
     total_normal = sum(len(b.transactions) for b in bundles)
     scenario_counts = _target_fraud_counts(total_normal)

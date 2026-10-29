@@ -110,6 +110,25 @@ forma que a velocidade implícita sempre exceda o limiar por uma margem
 confortável (testado explicitamente em
 `test_impossible_travel_scenario_violates_max_plausible_speed`).
 
+### Ruído legítimo (`add_legit_noise`)
+
+Clientes reais nem sempre seguem o próprio hábito. Antes das fraudes, o
+gerador perturba as compras **normais**, com um gerador aleatório próprio
+(`NOISE_SEED_OFFSET`):
+
+- 4% das compras num horário qualquer do dia (fora da janela, às vezes);
+- 3% das compras entre 2,5x e 8x a média do cliente (a fraude de valor
+  atípico vai de 6x a 15x: as faixas se sobrepõem);
+- 25% dos clientes trocam de celular no meio do histórico, e metade dos
+  aparelhos novos ainda não é confiável.
+
+Sem isso, cada cenário de fraude era uma coluna que separava as classes
+sozinha (nenhuma compra normal saía da janela de horário, por exemplo). Com
+o ruído, os mesmos sinais aparecem, mais raros, em compras legítimas, e o
+modelo precisa combinar sinais. Pelo mesmo motivo, metade das fraudes (fora
+`dispositivo_novo`) usa o canal habitual do titular
+(`FRAUD_MIMICS_HABIT_PROB`).
+
 ### 3. Valor atípico (`valor_atipico`)
 Valor entre 6x e 15x a média histórica **daquele cliente específico**
 (não um valor absoluto fixo — R$ 5.000 é normal para um cliente
@@ -196,18 +215,26 @@ e/ou modelos.
 
 | Feature | Definição |
 |---|---|
-| `amount_deviation` | `(valor - média do cliente) / média do cliente`, com sinal. Relativa ao PRÓPRIO cliente (R$ 3.000 é ~0 para um `alto_gasto` e ~+30 para um `fixo` de média R$ 100) |
+| `amount_deviation` | `(valor - média do cliente) / média do cliente`, com sinal, onde a média vem das compras ANTERIORES do cliente (`HabitProfile`). Relativa ao PRÓPRIO cliente (R$ 3.000 é ~0 para um `alto_gasto` e ~+30 para um `fixo` de média R$ 100). Com menos de 5 compras anteriores, 0 |
 | `location_distance` | `distance_from_home_km` em escala log, normalizado para [0, 1] (referência fixa de 20.000 km) |
-| `unusual_hour` | Distância circular (h) até a janela típica do cliente, dividida por 12; 0 dentro da janela |
+| `unusual_hour` | Distância circular (h) até a janela habitual do cliente, dividida por 12; 0 dentro da janela. A janela vai do quantil 5% ao 95% dos horários das compras ANTERIORES (`HabitProfile`). Com menos de 5 compras anteriores, 0 |
 | `new_device` | O dispositivo nunca apareceu antes no histórico do cliente — mas só quando JÁ existe histórico: na primeira transação do cliente é `False` ("nunca vi esse dispositivo porque nunca vi nada" não é o mesmo sinal que "dispositivo novo depois de um histórico estabelecido") |
 | `new_city` | A cidade do estabelecimento nunca apareceu no histórico ANTERIOR do cliente e não é a cidade natal; na primeira transação do cliente é `False` (mesma decisão de `new_device`). Adicionada na Etapa 7.5 — ver `docs/RISK_ENGINE.md` |
 | `implied_speed_kmh` / `is_impossible_travel` | km/h entre duas transações consecutivas do cliente (`geopy.geodesic`); impossível se > 900 km/h, o mesmo limiar do gerador. Primeira transação do cliente: 0.0 / False, explicitamente |
 
 Duas decisões que valem registrar:
 
-- `amount_deviation` usa diferença relativa e não z-score porque `Customer`
-  guarda só a média; derivar um desvio-padrão das constantes do gerador
-  vazaria o mecanismo de geração para dentro da feature.
+- **Os hábitos vêm do histórico, não do gerador.** `Customer` guarda os
+  parâmetros com que o gerador sorteou as compras (`avg_amount_baseline`,
+  `typical_hour_start/end`); um banco real não teria esses números, só as
+  compras passadas. As features comparam a transação com a média e a janela
+  de horário estimadas das compras anteriores (`HabitProfile`), e um teste
+  (`test_pipeline_never_reads_the_generator_parameters`) garante que trocar
+  os parâmetros no banco não muda nenhuma feature. A estimativa erra como
+  erraria na operação: com poucas compras, ou quando compras grandes
+  anteriores inflam a média.
+- `amount_deviation` usa diferença relativa e não z-score porque, com
+  poucas compras no histórico, um desvio-padrão estimado seria instável.
 - Timestamps têm resolução de minuto, então duas transações no mesmo
   minuto têm delta 0. `implied_travel_speed` aplica um piso de 1 minuto no
   delta (sem ele a velocidade seria infinita até para dois estabelecimentos

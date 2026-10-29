@@ -61,10 +61,10 @@ def synthetic_pipeline(synthetic_df):
         fraud_score,
         train_all_models,
     )
-    from src.preprocessing import get_train_test_split, scale_amount_time
+    from src.preprocessing import get_train_test_split, prepare_features
 
     X_train, X_test, y_train, y_test = get_train_test_split(synthetic_df)
-    X_train_scaled, X_test_scaled, _ = scale_amount_time(X_train, X_test)
+    X_train_scaled, X_test_scaled, _ = prepare_features(X_train, X_test)
 
     models = train_all_models(X_train_scaled, y_train)
     fraud_rate = float(y_train.mean())

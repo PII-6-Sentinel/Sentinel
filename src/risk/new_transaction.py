@@ -35,16 +35,17 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.risk.engine import RiskEngine, RiskResult
+from src.synthetic.feature_pipeline import habit_context
 from src.synthetic.features import (
-    amount_deviation,
+    HabitProfile,
     channel_rarity,
+    habit_features,
     implied_travel_speed,
     is_contactless,
     is_online,
     location_distance,
     new_city_flag,
     new_device_flag,
-    unusual_hour,
 )
 from src.synthetic.geo_reference import CITIES, distance_km
 from src.synthetic.models import Channel, Customer, Device, Merchant, PaymentMethod, Transaction
@@ -95,6 +96,7 @@ def compute_transaction_features(
     seen_devices = {t.device_id for t in history}
     seen_cities = {c for _, c in rows}
     seen_channels = Counter(t.channel for t in history)
+    habit = HabitProfile(history)
     city = city or nearest_city(lat, lon)
     if channel not in {c.value for c in Channel}:
         raise ValueError(f"canal desconhecido: {channel!r}")
@@ -113,14 +115,15 @@ def compute_transaction_features(
         payment_method=payment_method,
     )
     travel = implied_travel_speed(tx, previous)
+    deviation, hour_gap = habit_features(tx, habit)
 
     device = session.get(Device, device_id) if device_id is not None else None
     trusted = device is not None and device.customer_id == customer_id and bool(device.is_trusted)
 
     return {
-        "amount_deviation": amount_deviation(tx, customer),
+        "amount_deviation": deviation,
         "location_distance": location_distance(tx),
-        "unusual_hour": unusual_hour(tx, customer),
+        "unusual_hour": hour_gap,
         "new_device": new_device_flag(tx, seen_devices),
         "new_city": new_city_flag(city, customer, seen_cities),
         # mesma convenção de build_feature_table: sem transação anterior, 0.0
@@ -132,6 +135,7 @@ def compute_transaction_features(
         "distance_from_home_km": km,
         "device_untrusted": not trusted,
         "merchant_city": city,
+        **habit_context(habit),
     }
 
 

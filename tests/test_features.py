@@ -9,6 +9,7 @@ gerador — nunca sobre data/synthetic/sentinel.db.
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
+import pandas as pd
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -16,7 +17,10 @@ from sqlalchemy.orm import Session
 from src.synthetic.feature_pipeline import FEATURE_COLUMNS, TABLE_COLUMNS, build_feature_table
 from src.synthetic.features import (
     MAX_REFERENCE_DISTANCE_KM,
+    MIN_HISTORY_FOR_HABITS,
+    HabitProfile,
     amount_deviation,
+    habit_features,
     implied_travel_speed,
     location_distance,
     new_city_flag,
@@ -331,12 +335,21 @@ def test_features_reflect_the_scenario_that_generated_each_fraud(populated):
     _, _, table = populated
     normal = table[~table["is_fraud"]]
 
+    # Gerado com 6x-15x a média do GERADOR, mas comparado com a média do
+    # HISTÓRICO, que compras grandes legítimas anteriores podem inflar. Sem
+    # histórico suficiente (início do cliente), a feature fica em 0.
     valor = table[table["fraud_scenario"] == "valor_atipico"]
-    assert (valor["amount_deviation"] >= 5.0).all()  # gerado com 6x-15x a média
+    known = valor["habit_avg_amount"].notna()
+    assert known.mean() > 0.8
+    assert (valor.loc[known, "amount_deviation"] >= 2.0).all()
+    assert valor.loc[known, "amount_deviation"].median() >= 5.0
     assert normal["amount_deviation"].abs().mean() < 1.0
 
+    # Com histórico suficiente, todo horário atípico sai da janela estimada.
     horario = table[table["fraud_scenario"] == "horario_atipico"]
-    assert (horario["unusual_hour"] > 0).all()
+    known = horario["habit_avg_amount"].notna()
+    assert known.mean() > 0.8
+    assert (horario.loc[known, "unusual_hour"] > 0).all()
 
     geo = table[table["fraud_scenario"] == "anomalia_geografica"]
     assert geo["location_distance"].mean() > 2 * normal["location_distance"].median()
@@ -456,3 +469,63 @@ def test_new_city_flags_geographic_anomalies_far_more_than_normal_transactions(p
     normal = table[~table["is_fraud"]]
     assert geo["new_city"].mean() >= 0.8
     assert normal["new_city"].mean() < 0.02
+
+
+# ---------------------------------------------------------------------------
+# HabitProfile: hábitos estimados só com o histórico
+# ---------------------------------------------------------------------------
+
+
+def test_habit_profile_estimates_mean_and_hour_window_from_past_purchases():
+    history = [tx(amount=a, hour=h) for a, h in [(100, 9), (120, 10), (80, 12), (100, 14), (100, 18)]]
+    profile = HabitProfile(history)
+    assert profile.is_known and profile.n_transactions == 5
+    assert profile.avg_amount_baseline == pytest.approx(100.0)
+    # quantis 5% e 95% dos horários (9, 10, 12, 14, 18), interpolação linear
+    assert profile.typical_hour_start == pytest.approx(9.2)
+    assert profile.typical_hour_end == pytest.approx(17.2)
+
+
+def test_habit_features_are_neutral_without_enough_history():
+    short = HabitProfile([tx(amount=10.0, hour=9)] * (MIN_HISTORY_FOR_HABITS - 1))
+    assert not short.is_known
+    assert habit_features(tx(amount=10_000.0, hour=3), short) == (0.0, 0.0)
+
+
+def test_habit_features_compare_with_the_estimated_habit():
+    profile = HabitProfile([tx(amount=100.0, hour=h) for h in (10, 11, 12, 13, 14)])
+    deviation, hour_gap = habit_features(tx(amount=300.0, hour=22), profile)
+    assert deviation == pytest.approx(2.0)
+    assert hour_gap == pytest.approx((22 - profile.typical_hour_end) / 12)
+
+
+def test_pipeline_never_reads_the_generator_parameters(populated):
+    """Os parâmetros com que o gerador sorteou as compras (`Customer`) não
+    podem influenciar as features: trocá-los no banco não muda a tabela."""
+    engine, _, table = populated
+    with Session(engine) as session:
+        for c in session.scalars(select(Customer)):
+            c.avg_amount_baseline *= 7.0
+            c.typical_hour_start, c.typical_hour_end = 0, 1
+        session.flush()
+        changed = build_feature_table(session)
+        session.rollback()
+    pd.testing.assert_frame_equal(changed, table)
+
+
+def test_pipeline_habits_use_only_earlier_transactions(populated):
+    """O hábito de cada linha é recalculável só com as compras ANTERIORES
+    do cliente (nunca a própria nem as futuras)."""
+    engine, _, table = populated
+    with Session(engine) as session:
+        txs = session.scalars(select(Transaction).order_by(Transaction.customer_id, Transaction.timestamp, Transaction.id)).all()
+        by_id = table.set_index("transaction_id")
+        for cid in sorted({t.customer_id for t in txs})[:10]:
+            history = [t for t in txs if t.customer_id == cid]
+            for i, t in enumerate(history):
+                expected = HabitProfile(history[:i])
+                row = by_id.loc[t.id]
+                if expected.is_known:
+                    assert row["habit_avg_amount"] == pytest.approx(expected.avg_amount_baseline)
+                else:
+                    assert pd.isna(row["habit_avg_amount"])

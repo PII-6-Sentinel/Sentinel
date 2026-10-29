@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import pytest
 from sklearn.metrics import average_precision_score
 
@@ -13,6 +14,7 @@ from src.models import (
     train_all_models,
 )
 from src.preprocessing import (
+    prepare_features,
     scale_amount_time,
     split_features_target,
     train_test_split_stratified,
@@ -155,7 +157,7 @@ def test_evaluate_model_requires_explicit_threshold(synthetic_df):
 def test_full_pipeline_smoke(synthetic_df):
     X, y = split_features_target(synthetic_df)
     X_train, X_test, y_train, y_test = train_test_split_stratified(X, y, random_state=0)
-    X_train, X_test, _ = scale_amount_time(X_train, X_test)
+    X_train, X_test, _ = prepare_features(X_train, X_test)
 
     fraud_rate = float(y_train.mean())
     models = train_all_models(X_train, y_train)
@@ -163,6 +165,7 @@ def test_full_pipeline_smoke(synthetic_df):
         "Baseline Estatístico",
         "Regressão Logística",
         "Isolation Forest",
+        "Gradient Boosting",
     }
 
     for name, model in models.items():
@@ -177,5 +180,33 @@ def test_full_pipeline_smoke(synthetic_df):
         assert 0.0 <= result.auc_roc <= 1.0
         assert 0.0 <= result.auc_pr <= 1.0
         # Neste dataset sintético (classes bem separadas), espera-se
-        # detecção melhor que aleatória para os três modelos.
+        # detecção melhor que aleatória para todos os modelos.
         assert result.auc_roc > 0.6, f"{name} com AUC-ROC muito baixo: {result.auc_roc}"
+
+
+# ---------------------------------------------------------------------------
+# 7. Gradient Boosting aprende o que um modelo linear não aprende
+# ---------------------------------------------------------------------------
+
+
+def test_gradient_boosting_learns_an_interaction_logistic_regression_cannot():
+    """Fraude só quando V1 e V2 têm o MESMO sinal (um "xor" invertido):
+    nenhuma das duas features, sozinha e em linha reta, separa as classes.
+    É o tipo de padrão que justifica ter um modelo de árvores no projeto —
+    ele aprende a interação a partir dos dados, sem ninguém escrevê-la.
+    """
+    rng = np.random.default_rng(0)
+    n = 4000
+    X = pd.DataFrame(rng.normal(size=(n, 28)), columns=[f"V{i}" for i in range(1, 29)])
+    X["Amount"] = rng.exponential(50.0, n)
+    X["hour_sin"], X["hour_cos"] = 0.0, 1.0
+    y = pd.Series(((X["V1"] > 0.8) & (X["V2"] > 0.8) | (X["V1"] < -0.8) & (X["V2"] < -0.8)).astype(int))
+    train, test = slice(0, 3000), slice(3000, None)
+
+    models = train_all_models(X.iloc[train], y.iloc[train])
+    pr_auc = {
+        name: average_precision_score(y.iloc[test], fraud_score(models[name], X.iloc[test]))
+        for name in ("Regressão Logística", "Gradient Boosting")
+    }
+    assert pr_auc["Gradient Boosting"] > 0.9
+    assert pr_auc["Gradient Boosting"] > pr_auc["Regressão Logística"] + 0.4
