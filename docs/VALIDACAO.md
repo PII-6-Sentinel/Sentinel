@@ -18,6 +18,14 @@ fraude real**.
 No app e nos relatórios, essa ressalva aparece junto de cada bloco de
 métricas (`ui.metrics_caveat`, `PROTOTYPE_NOTICE`).
 
+A circularidade foi reduzida, não eliminada (Etapa 14, `docs/RISK_ENGINE.md`):
+valor e horário são comparados com hábitos **estimados do histórico**, não
+com os parâmetros do gerador; compras legítimas às vezes fogem do hábito
+(horário, valor, celular novo); e metade das fraudes usa o canal habitual do
+titular. Com isso, nenhum cenário depende mais de um único sinal que nunca
+aparece em compras legítimas — exceto `dispositivo_novo`, que continua
+sempre online, com aparelho novo e não confiável.
+
 ## 2. Benchmark público (Kaggle) — técnicas em dados reais
 
 O dataset Credit Card Fraud Detection (Kaggle/ULB) tem fraudes **reais e

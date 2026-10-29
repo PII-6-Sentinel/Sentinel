@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.risk.dataset import RISK_TABLE_COLUMNS
-from src.synthetic.feature_pipeline import FEATURE_COLUMNS, build_feature_table
+from src.synthetic.feature_pipeline import FEATURE_COLUMNS, HABIT_COLUMNS, build_feature_table
 from src.synthetic.models import Device, FraudScenario, Transaction
 
 
@@ -14,7 +14,8 @@ def test_columns_and_one_row_per_transaction(synthetic_engine, risk_table):
     assert list(risk_table.columns) == RISK_TABLE_COLUMNS
     assert len(risk_table) == n_tx
     assert risk_table["transaction_id"].is_unique
-    assert not risk_table.drop(columns=["fraud_scenario"]).isna().any().any()
+    # vazios esperados: o cenário das normais e o hábito sem histórico suficiente
+    assert not risk_table.drop(columns=["fraud_scenario", *HABIT_COLUMNS]).isna().any().any()
 
 
 def test_feature_columns_are_exactly_build_feature_table(synthetic_engine, risk_table):

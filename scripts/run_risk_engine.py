@@ -199,7 +199,11 @@ def main() -> None:
             print(f"    cliente: {customer.name} ({customer.behavior_profile.value}, mora em {customer.home_city})")
             print(
                 f"    R$ {tx.amount:,.2f} em {merchant.name} ({merchant.city}), {tx.timestamp:%d/%m/%Y %H:%M}"
-                f" - média do cliente R$ {customer.avg_amount_baseline:,.2f}"
+                + (
+                    f" - média do cliente R$ {row['habit_avg_amount']:,.2f} (das compras anteriores)"
+                    if row["habit_avg_amount"] == row["habit_avg_amount"]  # NaN = sem histórico suficiente
+                    else " - sem histórico suficiente para estimar a média"
+                )
             )
             print(
                 f"    Risk Score {result.risk_score}/100 [interno {result.raw_score}] "

@@ -260,7 +260,14 @@ vai acontecer) e não há `st.cache_*` rodando a análise. Só o clique em
    simulação (`is_fraud`) — fraudes capturadas, falsos positivos, matriz de
    confusão — calculada **só sobre os clientes de teste** (o mesmo split por
    cliente da avaliação do motor), sempre com o aviso "dados simulados;
-   valida a lógica do sistema, não o desempenho em fraude real".
+   valida a lógica do sistema, não o desempenho em fraude real";
+6. **o que o modelo de ML aprendeu**: o peso que a Regressão Logística deu,
+   sozinha, a cada característica (coeficientes sobre features
+   padronizadas), do maior para o menor efeito.
+
+No painel de investigação, a média e a janela de horário do cliente são as
+**estimadas das compras anteriores** àquela transação, as mesmas com que o
+motor a comparou (vazias nas primeiras compras do cliente).
 
 A análise treina o ML nos clientes de treino, escolhe o peso e calibra as
 faixas nos de validação (as mesmas regras de `src/risk/report.py`) e aplica o
@@ -628,6 +635,7 @@ falhando aparece marcado em vermelho antes do merge.
 - [x] Simulador ao vivo: formulário, cenários de demonstração, raciocínio passo a passo, veredito e histórico da sessão (`app/views/simulator.py`).
 - [x] Avaliação temporal, volume de alertas e limiar por custo no benchmark público (`src/benchmark.py`).
 - [x] Dependências fixadas e testes automáticos no GitHub Actions (`.github/workflows/tests.yml`).
+- [x] Hábitos estimados do histórico, ruído legítimo no gerador e pesos do ML na Central (`docs/RISK_ENGINE.md`, seção 6.2).
 - [ ] Rodar `scripts/run_kaggle_benchmark.py` com o dataset real e registrar os números.
 - [ ] Validar com dados reais rotulados de uma instituição, separados por período, com limiares por custo (`docs/VALIDACAO.md`, seção 3).
 - [ ] Ajustar hiperparâmetros e comparar com balanceamento via SMOTE (não só `class_weight`).

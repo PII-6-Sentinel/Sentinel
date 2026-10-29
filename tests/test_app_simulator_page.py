@@ -345,6 +345,7 @@ def test_page_verdict_equals_score_new_transaction(page, db):
         reference = score_new_transaction(
             s, engine, customer_id=form.customer_id, amount=form.amount, lat=city.lat, lon=city.lon,
             timestamp=form.timestamp, device_id=None if form.device_id == sim.NEW_DEVICE else form.device_id, city=form.city,
+            channel=form.channel, payment_method=form.payment_method,
         )
     assert entry["result"].assessment == reference
 

@@ -29,11 +29,12 @@ from risk_analysis import (
     database_problem,
     efficiency,
     investigate,
+    model_weights,
     resolve_db_path,
     run_analysis,
     summarize,
 )
-from simulator import CHANNEL_OPTIONS
+from simulator import CHANNEL_OPTIONS, fmt_hour
 from theme import LEVEL_COLORS
 from ui import (
     ACTION_LABEL,
@@ -342,7 +343,11 @@ def _render_investigation(result: AnalysisResult, transaction_id: int) -> None:
         with st.container(key="sx-panel-map"):
             st.markdown('<div class="sx-panel-title">Residência e local da compra</div>', unsafe_allow_html=True)
             st.plotly_chart(location_map(row), key="tx_map", theme=None)
-        window = f"{int(row['typical_hour_start'])}h–{int(row['typical_hour_end'])}h"
+        # Hábito estimado só com as compras ANTERIORES a esta — o mesmo com
+        # que o motor a comparou. Vazio nas primeiras compras do cliente.
+        known = pd.notna(row["habit_avg_amount"])
+        habit_amount = fmt_brl(row["habit_avg_amount"]) if known else "sem histórico suficiente"
+        window = f"{fmt_hour(row['habit_hour_start'])}–{fmt_hour(row['habit_hour_end'])}" if known else "sem histórico suficiente"
         st.markdown(
             panel(
                 "Ficha da transação",
@@ -352,7 +357,7 @@ def _render_investigation(result: AnalysisResult, transaction_id: int) -> None:
                         (
                             "Valor",
                             f"{fmt_brl(row['amount'])}"
-                            f'<div class="k">média habitual do cliente: {fmt_brl(row["avg_amount_baseline"])}</div>',
+                            f'<div class="k">média habitual do cliente: {habit_amount}</div>',
                         ),
                         ("Cidade da compra", f"{esc(row['city'])} — {esc(row['merchant'])}"),
                         (
@@ -448,6 +453,30 @@ def _render_efficiency(result: AnalysisResult) -> None:
         )
 
 
+def _render_model(result: AnalysisResult) -> None:
+    weights = model_weights(result)
+    strongest = max(abs(v) for _, v in weights) or 1.0
+    st.subheader("O que o modelo de ML aprendeu")
+    st.caption(
+        "Pesos que a Regressão Logística aprendeu SOZINHA com as transações de treino: ninguém os escreveu. "
+        "Quanto maior a barra, mais a característica move o score de ML; positivo aumenta o risco, negativo "
+        "diminui. As características estão padronizadas, então os pesos são comparáveis entre si. Como os "
+        "dados são simulados, os pesos mostram o que distingue as fraudes DESTA simulação."
+    )
+    st.markdown(
+        panel(
+            "Peso de cada característica no score de ML",
+            bar_rows(
+                [
+                    (label, "aumenta o risco" if value > 0 else "diminui o risco", abs(value) / strongest, f"{value:+.2f}".replace(".", ","))
+                    for label, value in weights
+                ]
+            ),
+        ),
+        unsafe_allow_html=True,
+    )
+
+
 # ----------------------------------------------------------------------
 # página
 # ----------------------------------------------------------------------
@@ -518,4 +547,5 @@ def render():
         st.info("Selecione uma transação na tabela para abrir o painel de investigação.", icon=":material/search:")
 
     _render_efficiency(result)
+    _render_model(result)
 

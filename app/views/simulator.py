@@ -141,12 +141,11 @@ def _context_caption(ctx: CustomerContext) -> str:
 def _customer_panel(ctx: CustomerContext) -> str:
     cities = ", ".join(f"{esc(c)} ({n})" for c, n in sorted(ctx.city_counts.items(), key=lambda kv: (-kv[1], kv[0])))
     trusted = sum(d.is_trusted for d in ctx.devices)
-    observed = f" (média observada: {fmt_brl(ctx.observed_avg_amount)})" if ctx.observed_avg_amount else ""
     body = kv_table(
         [
             ("Cliente", f"{esc(ctx.name)} (#{ctx.customer_id}) — perfil {esc(ctx.profile)}"),
             ("Cidade natal", esc(ctx.home_city)),
-            ("Transações", f"{ctx.n_transactions}; valor médio do cliente {fmt_brl(ctx.avg_amount_baseline)}{observed}"),
+            ("Transações", f"{ctx.n_transactions}; valor médio do cliente {fmt_brl(ctx.avg_amount_baseline)} (das compras anteriores)"),
             ("Janela habitual", ctx.window),
             ("Cidades conhecidas", cities or "nenhuma"),
             ("Dispositivos", f"{len(ctx.devices)} ({trusted} confiáveis)"),

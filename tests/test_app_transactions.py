@@ -368,7 +368,9 @@ def test_panel_shows_the_amount_and_the_customer_average_in_the_fact_sheet(analy
     row = _frame(analyzed).set_index("transaction_id").loc[tx_id]
     sheet = next(m.value for m in analyzed.markdown if "Ficha da transação" in m.value)
     assert ui.fmt_brl(row["amount"]) in sheet
-    assert f"média habitual do cliente: {ui.fmt_brl(row['avg_amount_baseline'])}" in sheet
+    # hábito estimado só com as compras anteriores; vazio no início do cliente
+    habit = ui.fmt_brl(row["habit_avg_amount"]) if row["habit_avg_amount"] == row["habit_avg_amount"] else "sem histórico suficiente"
+    assert f"média habitual do cliente: {habit}" in sheet
     assert chr(92) + "$" not in sheet
 
 
@@ -463,3 +465,14 @@ def test_table_and_record_show_the_channel(analyzed):
     table = _table(analyzed)
     assert set(table["Canal"]) <= {"Online", "Presencial · senha", "Presencial · aproximação"}
     assert len(set(table["Canal"])) == 3
+
+
+def test_model_panel_shows_every_learned_weight_from_the_trained_model(analyzed):
+    """O painel "O que o modelo de ML aprendeu" mostra um peso por feature,
+    exatamente os coeficientes do modelo que a análise treinou."""
+    assert any("O que o modelo de ML aprendeu" in s.value for s in analyzed.subheader)
+    panel = next(m.value for m in analyzed.markdown if "Peso de cada característica" in m.value)
+    coefs = analyzed.session_state["risk_analysis"].engine.ml_model.coefficients()
+    for name, value in coefs.items():
+        assert ra.ML_FEATURE_LABEL[name] in panel
+        assert f"{value:+.2f}".replace(".", ",") in panel

@@ -7,9 +7,18 @@ responsabilidade do Risk Engine (etapa futura), que vai consumir estas
 features tanto em regras quanto em modelos.
 
 Duck typing de propósito: as funções só usam atributos (`transaction.amount`,
-`customer.avg_amount_baseline`, ...), então funcionam igual com objetos ORM
+`profile.avg_amount_baseline`, ...), então funcionam igual com objetos ORM
 (`src/synthetic/models.py`) e com objetos simples nos testes, sem precisar
 de banco para testar cada feature isoladamente.
+
+Hábitos vêm do HISTÓRICO, não do gerador
+----------------------------------------
+`amount_deviation` e `unusual_hour` comparam a transação com os hábitos do
+cliente (valor médio, janela de horário). O `Customer` do banco guarda os
+parâmetros que o GERADOR usou para sortear as compras — um sistema real não
+teria esses números, só as compras passadas. Por isso quem monta as features
+passa um `HabitProfile`, estimado só com as transações ANTERIORES do cliente,
+e não o `Customer` (ver `habit_features`).
 
 Ver `src/synthetic/feature_pipeline.py` para a montagem da tabela completa
 a partir do banco.
@@ -18,7 +27,7 @@ a partir do banco.
 from __future__ import annotations
 
 import math
-from typing import Any, Collection, Mapping, NamedTuple
+from typing import Any, Collection, Mapping, NamedTuple, Sequence
 
 from src.synthetic.generator import MAX_PLAUSIBLE_SPEED_KMH
 from src.synthetic.geo_reference import distance_km
@@ -37,6 +46,76 @@ MAX_REFERENCE_DISTANCE_KM = 20_000.0
 MIN_TIME_DELTA_HOURS = 1.0 / 60.0
 
 
+# Compras anteriores necessárias para estimar um hábito. Com menos, valor e
+# horário não acendem nenhum sinal: sem passado suficiente não há hábito
+# (mesma convenção de `new_device_flag` e `channel_rarity` sem histórico).
+MIN_HISTORY_FOR_HABITS = 5
+
+# Janela habitual = entre estes quantis dos horários anteriores. Quantis em
+# vez de mínimo/máximo para que uma compra de madrugada esporádica (ou uma
+# fraude já no histórico) não alargue a janela para sempre.
+HABIT_HOUR_QUANTILES = (0.05, 0.95)
+
+
+def _quantile(sorted_values: Sequence[float], q: float) -> float:
+    """Quantil com interpolação linear (o mesmo critério do `numpy.quantile`)."""
+    position = q * (len(sorted_values) - 1)
+    low = math.floor(position)
+    high = min(low + 1, len(sorted_values) - 1)
+    return sorted_values[low] + (sorted_values[high] - sorted_values[low]) * (position - low)
+
+
+class HabitProfile:
+    """Hábitos do cliente estimados SÓ com as compras já vistas.
+
+    Quem monta as features chama `add` depois de calcular as features de
+    cada transação, em ordem cronológica — o perfil nunca enxerga a própria
+    transação nem o futuro. Expõe os mesmos atributos que `amount_deviation`
+    e `unusual_hour` leem (`avg_amount_baseline`, `typical_hour_start`,
+    `typical_hour_end`), agora como estimativas.
+
+    A janela de horário é linear (início ≤ fim): estimada por quantis dos
+    horários, não representa uma janela que cruza a meia-noite.
+    """
+
+    def __init__(self, transactions: Sequence[Any] = ()):
+        self._amounts: list[float] = []
+        self._hours: list[float] = []
+        for transaction in transactions:
+            self.add(transaction)
+
+    def add(self, transaction: Any) -> None:
+        ts = transaction.timestamp
+        self._amounts.append(float(transaction.amount))
+        self._hours.append(ts.hour + ts.minute / 60.0 + ts.second / 3600.0)
+
+    @property
+    def n_transactions(self) -> int:
+        return len(self._amounts)
+
+    @property
+    def is_known(self) -> bool:
+        """Há histórico suficiente para comparar uma compra com o hábito."""
+        return self.n_transactions >= MIN_HISTORY_FOR_HABITS
+
+    @property
+    def avg_amount_baseline(self) -> float | None:
+        if not self._amounts:
+            return None
+        return sum(self._amounts) / len(self._amounts)
+
+    def _hour_quantile(self, q: float) -> float | None:
+        return _quantile(sorted(self._hours), q) if self._hours else None
+
+    @property
+    def typical_hour_start(self) -> float | None:
+        return self._hour_quantile(HABIT_HOUR_QUANTILES[0])
+
+    @property
+    def typical_hour_end(self) -> float | None:
+        return self._hour_quantile(HABIT_HOUR_QUANTILES[1])
+
+
 class TravelSpeed(NamedTuple):
     """Resultado de `implied_travel_speed`.
 
@@ -48,20 +127,20 @@ class TravelSpeed(NamedTuple):
     is_impossible_travel: bool
 
 
-def amount_deviation(transaction: Any, customer: Any) -> float:
+def amount_deviation(transaction: Any, profile: Any) -> float:
     """Diferença RELATIVA (com sinal) do valor da transação para a média
-    histórica do próprio cliente: `(valor - média) / média`.
+    histórica do próprio cliente: `(valor - média) / média`. `profile` é
+    um `HabitProfile` (ou qualquer objeto com `avg_amount_baseline`).
 
     0.0 = exatamente na média; +1.0 = o dobro da média; -0.5 = metade.
     R$ 3.000 dá ~0 para um `alto_gasto` com média de R$ 3.000, e ~+30 para
     um `fixo` com média de R$ 100 — o mesmo valor, sinais opostos.
 
-    Diferença relativa (e não z-score) porque `Customer` guarda só a média
-    (`avg_amount_baseline`), não o desvio-padrão — e inventar um desvio a
-    partir das constantes do gerador vazaria o mecanismo de geração para
-    dentro da feature.
+    Diferença relativa (e não z-score) porque, com poucas compras no
+    histórico, a média já é uma estimativa ruidosa; um desvio-padrão
+    estimado do mesmo histórico seria ainda mais instável.
     """
-    baseline = customer.avg_amount_baseline
+    baseline = profile.avg_amount_baseline
     if baseline <= 0:
         raise ValueError(f"avg_amount_baseline precisa ser > 0, recebido {baseline!r}")
     return (transaction.amount - baseline) / baseline
@@ -85,7 +164,7 @@ def _circular_hour_gap(a: float, b: float) -> float:
     return min(gap, 24.0 - gap)
 
 
-def unusual_hour(transaction: Any, customer: Any) -> float:
+def unusual_hour(transaction: Any, profile: Any) -> float:
     """Quão fora da janela habitual do cliente está o horário, em [0, 1].
 
     0.0 = dentro de `[typical_hour_start, typical_hour_end]`. Fora dela,
@@ -96,7 +175,7 @@ def unusual_hour(transaction: Any, customer: Any) -> float:
     """
     ts = transaction.timestamp
     hour = ts.hour + ts.minute / 60.0 + ts.second / 3600.0
-    start, end = customer.typical_hour_start, customer.typical_hour_end
+    start, end = profile.typical_hour_start, profile.typical_hour_end
 
     inside = (start <= hour <= end) if start <= end else (hour >= start or hour <= end)
     if inside:
@@ -104,6 +183,16 @@ def unusual_hour(transaction: Any, customer: Any) -> float:
 
     gap = min(_circular_hour_gap(hour, start), _circular_hour_gap(hour, end))
     return gap / 12.0
+
+
+def habit_features(transaction: Any, profile: HabitProfile) -> tuple[float, float]:
+    """(`amount_deviation`, `unusual_hour`) da transação contra o hábito
+    estimado. Sem histórico suficiente (`profile.is_known` falso), (0.0,
+    0.0): não se sabe o que é habitual, então nada destoa.
+    """
+    if not profile.is_known:
+        return 0.0, 0.0
+    return amount_deviation(transaction, profile), unusual_hour(transaction, profile)
 
 
 def new_device_flag(transaction: Any, seen_device_ids: Collection[int]) -> bool:

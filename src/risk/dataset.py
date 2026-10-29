@@ -11,6 +11,9 @@ transação, colunas que vêm direto do banco:
   mas ainda não era feature;
 - `merchant_city`: cidade do estabelecimento — não é feature (o modelo não
   a lê), só contexto para o motivo "Primeira compra do cliente nesta cidade".
+
+As `HABIT_COLUMNS` (média e janela de horário estimadas do histórico) vêm
+de `build_feature_table` e também são só contexto.
 """
 
 from __future__ import annotations
@@ -19,14 +22,15 @@ import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.synthetic.feature_pipeline import FEATURE_COLUMNS, build_feature_table
+from src.synthetic.feature_pipeline import FEATURE_COLUMNS, HABIT_COLUMNS, build_feature_table
 from src.synthetic.models import Device, Merchant, Transaction
 
 # Features que o Risk Engine consome (regras e/ou modelo).
 RISK_FEATURES = [*FEATURE_COLUMNS, "distance_from_home_km", "device_untrusted"]
 
-# Colunas descritivas: aparecem nos motivos, nunca entram no modelo.
-CONTEXT_COLUMNS = ["merchant_city"]
+# Colunas descritivas: aparecem nos motivos e na tela, nunca entram no
+# modelo. `HABIT_COLUMNS` = o hábito estimado com que a transação foi comparada.
+CONTEXT_COLUMNS = ["merchant_city", *HABIT_COLUMNS]
 
 RISK_TABLE_COLUMNS = ["transaction_id", "customer_id", *RISK_FEATURES, *CONTEXT_COLUMNS, "is_fraud", "fraud_scenario"]
 

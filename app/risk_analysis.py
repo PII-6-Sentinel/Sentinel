@@ -92,6 +92,10 @@ ProgressCallback = Callable[[str, "float | None"], None]
 # Colunas da tabela de risco que o painel de investigação também exibe.
 _FEATURE_COLUMNS_FOR_PANEL = [
     "transaction_id",
+    # hábito estimado com que a transação foi comparada (vazio sem histórico)
+    "habit_avg_amount",
+    "habit_hour_start",
+    "habit_hour_end",
     "new_device",
     "new_city",
     "device_untrusted",
@@ -196,9 +200,6 @@ def _load_transactions(session: Session) -> pd.DataFrame:
             Customer.home_state,
             Customer.home_lat,
             Customer.home_lon,
-            Customer.avg_amount_baseline,
-            Customer.typical_hour_start,
-            Customer.typical_hour_end,
             Merchant.name.label("merchant"),
             Merchant.city.label("city"),
             Device.device_type,
@@ -430,3 +431,32 @@ def efficiency(result: AnalysisResult) -> dict:
         "by_action": by_action,
         "by_scenario": recall_by_scenario(test, flagged),
     }
+
+
+# Nome legível de cada feature do modelo de ML (`src.risk.ml_score.ML_FEATURES`).
+ML_FEATURE_LABEL = {
+    "amount_deviation": "Valor acima da média do cliente",
+    "location_distance": "Distância da residência",
+    "unusual_hour": "Horário fora da janela habitual",
+    "new_device": "Dispositivo nunca usado",
+    "new_city": "Cidade nunca visitada",
+    "device_untrusted": "Dispositivo não confiável",
+    "log_speed_kmh": "Velocidade desde a compra anterior",
+    "is_impossible_travel": "Viagem impossível",
+    "is_online": "Compra online",
+    "is_contactless": "Pagamento por aproximação",
+    "channel_rarity": "Canal raro para o cliente",
+}
+
+
+def model_weights(result: AnalysisResult) -> list[tuple[str, float]]:
+    """O que o modelo de ML aprendeu: (feature legível, coeficiente), do
+    maior para o menor efeito. Coeficientes sobre features PADRONIZADAS,
+    então comparáveis entre si; positivo = a feature aumenta o score de ML.
+    Aprendidos só no treino (`run_analysis`).
+    """
+    coefs = result.engine.ml_model.coefficients()
+    return sorted(
+        ((ML_FEATURE_LABEL.get(name, name), value) for name, value in coefs.items()),
+        key=lambda item: -abs(item[1]),
+    )

@@ -38,6 +38,7 @@ from sqlalchemy.orm import Session
 from src.risk.behavior_score import BehaviorConfig, behavior_score
 from src.risk.engine import RiskEngine, RiskResult, combine_scores
 from src.risk.new_transaction import compute_transaction_features
+from src.synthetic.features import HabitProfile
 from src.synthetic.generator import CONTACTLESS_LIMIT_BRL, MAX_PLAUSIBLE_SPEED_KMH
 from src.synthetic.geo_reference import CITIES, CityRef, distance_km
 from src.synthetic.models import Channel, Customer, Device, Merchant, PaymentMethod, Transaction
@@ -125,12 +126,13 @@ class CustomerContext:
     home_state: str | None
     home_lat: float
     home_lon: float
+    # Hábitos estimados do histórico (`HabitProfile`), os mesmos com que o
+    # motor compara a transação — não os parâmetros do gerador em `Customer`.
     avg_amount_baseline: float
-    typical_hour_start: int
-    typical_hour_end: int
+    typical_hour_start: float
+    typical_hour_end: float
     devices: list[DeviceInfo]
     n_transactions: int
-    observed_avg_amount: float | None
     first_timestamp: datetime | None
     last: LastPurchase | None
     city_counts: dict[str, int]
@@ -139,7 +141,7 @@ class CustomerContext:
 
     @property
     def window(self) -> str:
-        return f"{self.typical_hour_start}h–{self.typical_hour_end}h"
+        return f"{fmt_hour(self.typical_hour_start)}–{fmt_hour(self.typical_hour_end)}"
 
 
 def list_customers(session: Session) -> pd.DataFrame:
@@ -186,6 +188,7 @@ def load_context(session: Session, customer_id: int) -> CustomerContext:
         key = (tx.channel, tx.payment_method)
         channel_counts[key] = channel_counts.get(key, 0) + 1
 
+    habit = HabitProfile([tx for tx, _, _ in rows])
     last = None
     recent = pd.DataFrame(columns=["ID", "Data/hora", "Valor", "Cidade", "Dispositivo"])
     if rows:
@@ -207,12 +210,13 @@ def load_context(session: Session, customer_id: int) -> CustomerContext:
         home_state=customer.home_state,
         home_lat=customer.home_lat,
         home_lon=customer.home_lon,
-        avg_amount_baseline=customer.avg_amount_baseline,
-        typical_hour_start=customer.typical_hour_start,
-        typical_hour_end=customer.typical_hour_end,
+        # Sem nenhuma compra, o formulário parte do cadastro; as features
+        # ignoram o hábito até haver histórico suficiente (`habit_features`).
+        avg_amount_baseline=habit.avg_amount_baseline or customer.avg_amount_baseline,
+        typical_hour_start=habit.typical_hour_start if rows else customer.typical_hour_start,
+        typical_hour_end=habit.typical_hour_end if rows else customer.typical_hour_end,
         devices=devices,
         n_transactions=len(rows),
-        observed_avg_amount=(sum(t.amount for t, _, _ in rows) / len(rows)) if rows else None,
         first_timestamp=rows[0][0].timestamp if rows else None,
         last=last,
         city_counts=city_counts,
@@ -401,6 +405,13 @@ class SimulationResult:
 
 # (rótulo, detalhe | None, segundos | None): início = (rótulo, None, None)
 ProgressCallback = Callable[[str, "str | None", "float | None"], None]
+
+
+def fmt_hour(hour: float) -> str:
+    """8.0 -> '8h'; 19.75 -> '19h45' (horário estimado, em horas do dia)."""
+    minutes = int(round(hour * 60)) % (24 * 60)
+    h, m = divmod(minutes, 60)
+    return f"{h}h{m:02d}" if m else f"{h}h"
 
 
 def _fmt_int(value: float) -> str:

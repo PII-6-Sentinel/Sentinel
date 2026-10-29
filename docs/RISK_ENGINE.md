@@ -24,17 +24,19 @@ Recebe uma transação (suas features) e devolve um `RiskResult`:
 | `action` | `aprovar` / `revisar` / `bloquear` |
 | `reasons` | motivos legíveis, ordenados pela contribuição ao score final |
 
-Exemplo real (transação de teste, rótulo `combinacao_de_sinais`):
+Exemplo real (transação de teste, rótulo `combinacao_de_sinais`, motor atual):
 
 ```
-Risk Score 100/100 [interno 100] (ML 100.0, regras 100.0) -> bloquear / revisão urgente
+Risk Score 99/100 [interno 99] (ML 100.0, regras 99.2) -> bloquear / revisão urgente
   - Modelo estatístico: padrão semelhante a fraudes conhecidas (score ML 100/100)
   - Viagem impossível: 1.390 km/h entre duas compras
   - Localização incomum: 7.874 km da residência
   - Primeira compra do cliente nesta cidade (Belo Horizonte)
-  - Horário fora da janela habitual (3,2 h fora)
-  - Valor 2,6x acima da média do cliente
+  - Horário fora da janela habitual (3,7 h fora)
 ```
+
+> **Números atuais:** seção 6.2 (Etapa 14). As seções 2, 3, 5 e 7 registram
+> a Etapa 12.
 
 ## Arquitetura (`src/risk/`)
 
@@ -92,7 +94,8 @@ guarda só os pesos da combinação ML/regras).
   "probabilidade" fica inflada: ela **ordena** bem, mas **não é uma
   probabilidade calibrada de fraude** e não deve ser apresentada como tal.
 
-O que o modelo aprendeu (coeficientes sobre features padronizadas):
+O que o modelo aprendeu (coeficientes sobre features padronizadas; Etapa 12
+— os atuais estão na seção 6.2):
 
 | Feature | Coeficiente |
 |---|---|
@@ -112,6 +115,8 @@ perfeito. É um artefato dos dados, não conhecimento sobre fraude.
 dividem o peso entre si (por isso um deles fica perto de zero).
 
 ## 3. Combinação, piso, faixas e escala de exibição
+
+> Números da Etapa 12. Os atuais (Etapa 14) estão na seção 6.2.
 
 **Score interno** = peso_ML × ML + peso_regras × regras, arredondado.
 `EngineConfig` tem 50/50 como ponto de partida neutro; o motor avaliado usa
@@ -202,6 +207,8 @@ trechos e criaria empates artificiais).
 Para reproduzir: `python scripts/run_risk_engine.py`.
 
 ## 5. Resultados (teste, 39 clientes nunca vistos)
+
+> Números da Etapa 12. Os atuais (Etapa 14) estão na seção 6.2.
 
 > **Protótipo demonstrativo.** Os números desta seção e da 6.1 vêm do domínio
 > sintético, cujos rótulos foram gerados com os mesmos sinais que o motor usa:
@@ -364,6 +371,110 @@ canal das fraudes foi gerado com uma regra, e o modelo a aprende. No ML,
 `channel_rarity` tem coeficiente negativo por colinearidade com
 `is_online` — o efeito conjunto de "online raro" continua positivo.
 
+## 6.2 Etapa 14 — hábitos pelo histórico e ruído legítimo (números atuais)
+
+> **Os números desta seção são os do motor atual.** As seções 2, 3, 5 e 7
+> registram a Etapa 12, antes desta mudança.
+
+**O que mudou** (detalhes em [`DOMINIO_SINTETICO.md`](DOMINIO_SINTETICO.md)):
+
+1. `amount_deviation` e `unusual_hour` comparam a transação com a média e a
+   janela de horário **estimadas das compras anteriores** (`HabitProfile`),
+   e não com os parâmetros que o gerador usou (`Customer.avg_amount_baseline`,
+   `typical_hour_start/end`). Um sistema real só teria o histórico.
+2. **Ruído legítimo** no gerador: compras normais às vezes fora do horário
+   (4%), bem acima da média (3%), e 25% dos clientes trocam de celular.
+3. Metade das fraudes (fora `dispositivo_novo`) usa o **canal habitual** do
+   titular.
+4. A Central de Transações mostra **o que o modelo de ML aprendeu** (os
+   coeficientes) e o hábito estimado com que cada transação foi comparada.
+
+**Por quê:** antes, várias features separavam fraude de legítima sozinhas
+(nenhuma compra normal saía da janela de horário, e o hábito era o
+"verdadeiro" do gerador). O ML acertava lendo o gerador, não aprendendo.
+
+**Antes × depois (teste, 39 clientes nunca vistos, seed 42):**
+
+| | Etapa 12 | Etapa 14 |
+|---|---|---|
+| Peso escolhido na validação | 30% regras / 70% ML | **70% regras / 30% ML** |
+| Faixas internas (revisar / bloquear acima de) | 73 / 82 | 18 / 79 |
+| Só regras: PR-AUC | 0,678 | 0,629 |
+| Só ML: PR-AUC | 0,929 | 0,754 |
+| Motor: PR-AUC | 0,825 | 0,694 |
+| Combinado 50/50: PR-AUC | 0,803 | 0,709 |
+| Motor: fraudes capturadas | 53/56 | **55/56** |
+| Motor: falsos positivos | 23 | **258** |
+| Motor: precisão | 0,697 | 0,176 |
+| Validação cruzada (PR-AUC): ML | 0,950 ± 0,012 | 0,720 ± 0,032 |
+| Validação cruzada (PR-AUC): motor | 0,887 ± 0,031 | 0,720 ± 0,050 |
+
+Distribuição por nível (teste, motor atual):
+
+| Nível | Ação | Transações | % | Fraudes | Taxa de fraude no nível | % das fraudes |
+|---|---|---|---|---|---|---|
+| baixo | aprovar | 1.943 | 86,1% | 1 | 0,1% | 1,8% |
+| médio | revisar | 299 | 13,3% | 41 | 13,7% | 73,2% |
+| alto | bloquear | 14 | 0,6% | 14 | 100,0% | 25,0% |
+
+Recall por cenário (teste): todas as abordagens pegam 100% de
+`combinacao_de_sinais`, `dispositivo_novo`, `valor_atipico` e
+`viagem_impossivel`. Em `horario_atipico`, só regras pega **0/11**, o ML
+11/11 e o motor 10/11; em `anomalia_geografica`, regras e motor 11/11, ML
+10/11.
+
+O que o ML aprendeu (coeficientes sobre features padronizadas):
+`unusual_hour` +0,96, `amount_deviation` +0,95, `is_online` +0,91,
+`new_city` +0,74, `channel_rarity` −0,73, `new_device` +0,60,
+`location_distance` +0,46, `log_speed_kmh` +0,28, `device_untrusted` +0,27,
+`is_impossible_travel` +0,26, `is_contactless` +0,06. Antes, `unusual_hour`
+dominava (+2,7, mais que o dobro do segundo); agora horário e valor pesam o
+mesmo, e o canal entra logo atrás.
+
+**Como ler:**
+
+- **O problema ficou mais difícil, e os números caíram para um patamar mais
+  honesto.** O PR-AUC do ML caiu de 0,93 para 0,75. A queda é o efeito
+  esperado de tirar os atalhos do gerador, não uma piora do motor.
+- **O motor captura mais fraudes, ao custo de muitas revisões.** A meta da
+  calibração (revisar ≥ 90% das fraudes na validação) agora exige um limiar
+  de revisão baixo (18): 13% das transações vão para revisão, contra 2%
+  antes. Num banco real, isso decide o tamanho da equipe; o limiar deveria
+  ser escolhido por custo (ver `VALIDACAO.md`).
+- **O peso escolhido mudou para 70% regras.** A curva de PR-AUC na validação
+  ficou quase plana entre 30% e 80% de regras (0,619 a 0,627), e a regra de
+  desempate favorece as regras. Nenhum peso se destaca; com 40 fraudes na
+  validação, a escolha é frágil (no teste, o 50/50 teria ficado um pouco
+  melhor).
+- **O ML sozinho continua melhor que o motor no ranking**, mas a diferença
+  caiu (0,754 contra 0,694; na validação cruzada, empate em 0,720).
+- **Regras não pegam horário atípico** (0/11): horário vale no máximo
+  15 pontos, de propósito, e 17% das compras legítimas com histórico já saem
+  um pouco da janela estimada. O ML combina o horário com outros sinais e
+  pega todas.
+- **Gradient Boosting no lugar da Regressão Logística** foi testado fora do
+  motor: PR-AUC 0,734 / 0,787 / 0,791 contra 0,754 / 0,679 / 0,617 da
+  Regressão Logística nas seeds 42 / 7 / 123. Ele tende a ser melhor, mas
+  varia muito com tão poucas fraudes, e perderia os coeficientes legíveis.
+  O motor mantém a Regressão Logística; a troca fica como decisão do time.
+
+**Cenários do Simulador** (todos os 130 clientes, motor atual, faixas
+internas 18 e 79):
+
+| Cenário | Score interno (mín–máx) | Risk Score exibido | Resultado nos 130 clientes |
+|---|---|---|---|
+| Compra normal | 0–4 | 0–6 | 130 baixo (aprovar) |
+| Viagem impossível | 69–100 | 64–100 (mediana 85) | 125 alto, 5 médio |
+| Valor atípico | 47 | 50 | 130 médio (revisar) |
+| Horário atípico | 31–40 | 39–45 | 130 médio (revisar) |
+| Dispositivo novo | 52–63 | 53–60 | 130 médio (revisar) |
+| Cidade nova | 53–61 | 53–59 | **130 médio** (antes, 59 aprovados) |
+| Combinação de sinais | 82–92 | 75–89 | 130 alto (bloquear) |
+
+Os sinais isolados deixaram de ficar rente aos limiares (limitação 9): todos
+revisam com folga de pelo menos 13 pontos internos, e a combinação bloqueia
+nos 130 clientes.
+
 ## 7. Transação nova
 
 `src/risk/new_transaction.py`: `score_new_transaction(session, engine,
@@ -378,6 +489,8 @@ cliente), as features — inclusive `new_city` e a cidade inferida — batem
 com `build_risk_table`.
 
 ### Resultados dos cenários de demonstração (Simulador)
+
+> Números da Etapa 12. Os atuais (Etapa 14) estão na seção 6.2.
 
 O Simulador (`app/views/simulator.py`) tem sete cenários que só preenchem o
 formulário, com valores calculados do histórico do cliente escolhido; quem
@@ -435,9 +548,11 @@ foram ajustados para que os cenários "dêem certo".
    atuais, a primeira visita de um viajante a uma cidade é indistinguível
    de uma fraude geográfica; é a maior fonte de falsos positivos do motor
    (24 dos 30 no teste).
-3. **Artefato do horário.** Transações normais nunca saem da janela do
-   cliente no gerador, então o ML trata horário como separador perfeito
-   (maior coeficiente). Em dados reais esse sinal seria bem mais fraco.
+3. **Artefato do horário — reduzido na Etapa 14.** Até a Etapa 12,
+   transações normais nunca saíam da janela do cliente e o ML tratava o
+   horário como separador perfeito. Agora 4% das compras legítimas caem num
+   horário qualquer e a janela é estimada do histórico; o horário deixou de
+   dominar os coeficientes (seção 6.2).
 4. **O combinado não supera o ML sozinho** no ranking (seção 5). A
    validação, sem restrição, escolheria o ML puro; o motor usa 30% regras /
    70% ML porque a regra de escolha exige no mínimo 30% de regras, por
@@ -450,9 +565,15 @@ foram ajustados para que os cenários "dêem certo".
 6. **Limiares calibrados com 40 fraudes** não generalizam perfeitamente.
 7. **`ml_score` não é probabilidade calibrada** (`class_weight`
    balanceado infla as probabilidades da classe minoritária).
-8. **`device_untrusted` é perfeito para `dispositivo_novo`** porque o
-   gerador sempre cria esses dispositivos como não confiáveis — outro caso
-   de circularidade.
+8. **`dispositivo_novo` continua fácil de separar.** O gerador sempre cria
+   esses dispositivos como não confiáveis e a compra é sempre online. Desde
+   a Etapa 14 há clientes legítimos com celular novo e não confiável, mas a
+   combinação "aparelho novo + não confiável + online" segue quase
+   exclusiva da fraude — outro caso de circularidade.
+10. **Muitas revisões (Etapa 14).** Com os dados mais realistas, revisar
+    90% das fraudes exige mandar 13% das transações para revisão humana
+    (seção 6.2). A meta de recall foi mantida; num banco real, o limiar
+    seria escolhido pelo custo de revisão.
 9. **Sinais isolados ficam rente aos limiares** (seção 7, cenários do
    Simulador): dispositivo novo é aprovado por até 2 pontos e horário
    atípico é revisado por 1. A decisão nesses casos depende de poucos
