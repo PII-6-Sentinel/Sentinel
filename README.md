@@ -50,7 +50,7 @@ Sentinel/
 ├── src/               # código reutilizável (importado por notebooks E pelo app)
 │   ├── data_loader.py
 │   ├── preprocessing.py
-│   ├── models.py               # baseline estatístico, regressão logística, isolation forest
+│   ├── models.py               # baseline estatístico, regressão logística, isolation forest, gradient boosting
 │   ├── evaluation.py            # validação cruzada, varredura de threshold
 │   └── synthetic/                # domínio sintético — independente do Kaggle
 │       ├── models.py             # ORM SQLAlchemy (Customer, Card, Device, Merchant, Transaction)
@@ -82,7 +82,7 @@ Sentinel/
 
 **Por que separar `src/` de `notebooks/` e de `app/`:** o projeto compara
 várias abordagens (regras estatísticas, regressão logística, isolation
-forest, ...). Se cada notebook (ou a aplicação) reimplementar o
+forest, gradient boosting). Se cada notebook (ou a aplicação) reimplementar o
 carregamento de dados, o split treino/teste, o balanceamento de classes e
 o treino dos modelos do zero, é fácil introduzir inconsistências sutis que
 invalidam a comparação entre modelos. Colocando essa lógica em `src/` como
@@ -323,16 +323,16 @@ fraud_score(modelo, X)  →  threshold  →  apply_threshold(score, threshold)  
 ```
 
 Nenhum modelo decide "fraude ou não" sozinho via `model.predict()` — isso
-evitaria comparar os três de forma consistente, já que cada biblioteca tem
+evitaria comparar os modelos de forma consistente, já que cada biblioteca tem
 sua própria convenção interna de corte. Em vez disso:
 
 - **`fraud_score()`** extrai um escore contínuo de qualquer modelo (maior =
   mais suspeito), escondendo a API específica de cada um (probabilidade da
-  Regressão Logística, distância do baseline, escore de isolamento do
-  Isolation Forest).
+  Regressão Logística e do Gradient Boosting, distância do baseline,
+  escore de isolamento do Isolation Forest).
 - **`calibrate_threshold_by_contamination()`** calcula um threshold default
   a partir da taxa de fraude do **treino** — só para gerar um ponto de
-  operação comparável entre os três modelos nesta etapa acadêmica; não é
+  operação comparável entre os modelos nesta etapa acadêmica; não é
   uma prática de produção (a taxa real de fraude não estaria disponível
   com essa precisão fora de um dataset já rotulado).
 - **`apply_threshold()`** é a única função que transforma escore em decisão
@@ -344,6 +344,21 @@ sua própria convenção interna de corte. Em vez disso:
 Treino e calibração de threshold são etapas separadas: nenhum modelo é
 treinado usando a taxa real de fraude (o `IsolationForest` usa
 `contamination="auto"`, a heurística padrão do scikit-learn).
+
+**Gradient Boosting** (`HistGradientBoostingClassifier`) é o modelo que mais
+aprende sozinho: árvores em sequência, cada uma corrigindo as anteriores,
+que capturam interações entre features (ex.: "V14 baixo **e** valor alto")
+que a Regressão Logística, linear, não representa. Um teste
+(`tests/test_models.py`) mostra isso num padrão que só existe na combinação
+de duas features.
+
+**`Time` não entra nos modelos.** No dataset, `Time` são segundos desde a
+primeira transação, não um horário. Como feature, ele só diria "quão tarde
+na coleta" a compra ocorreu, e no split temporal todo o teste fica fora do
+intervalo do treino (o modelo extrapola). `prepare_features`
+([`src/preprocessing.py`](src/preprocessing.py)) troca `Time` pela hora do
+dia em seno/cosseno e padroniza `Amount`; `Time` segue usado só para
+ordenar o split temporal.
 
 O balanceamento via `class_weight="balanced"` (Regressão Logística) prioriza
 um app rápido de treinar/interagir. O SMOTE/undersampling implementado em
@@ -374,7 +389,7 @@ Dentro de cada um dos 5 folds, na ordem certa para não vazar dados:
 
 1. um `StandardScaler` **novo** é ajustado só com o treino daquele fold
    (nunca com o treino completo, e nunca com o validation do fold);
-2. os três modelos são treinados do zero nesse treino de fold;
+2. os modelos são treinados do zero nesse treino de fold;
 3. o threshold de cada modelo é calibrado usando só o escore do **treino
    do fold**;
 4. esse threshold é aplicado ao **validation do fold** (nunca visto pelos
@@ -418,7 +433,7 @@ Alguns pontos de design importantes:
   mas o baseline estatístico (distância no espaço V1..V28) e o Isolation
   Forest (escore de isolamento) usam escalas completamente diferentes;
   `fraud_score()` (`src/models.py`) já garante que "maior = mais
-  suspeito" para os três, mas não uniformiza a escala — e esta página não
+  suspeito" para todos, mas não uniformiza a escala — e esta página não
   cria uma segunda normalização por cima disso, só usa a escala como ela é.
 - **AUC-ROC e AUC-PR não mudam com o slider** — são calculadas sobre o
   ranking completo do escore, exibidas como referência fixa da qualidade
@@ -597,6 +612,7 @@ falhando aparece marcado em vermelho antes do merge.
 ## 10. Próximos passos
 
 - [x] Implementar o baseline estatístico, Regressão Logística e Isolation Forest (`src/models.py`).
+- [x] Gradient Boosting e hora do dia no lugar de `Time` bruto (`src/models.py`, `src/preprocessing.py`).
 - [x] Aplicação interativa (Streamlit) para apresentação (`app/`).
 - [x] AUC-PR e separação explícita entre score e threshold (`src/models.py`).
 - [x] Validação cruzada estratificada, só no treino (`src/evaluation.py`).

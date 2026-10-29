@@ -3,7 +3,9 @@ import pandas as pd
 
 from src.preprocessing import (
     get_train_test_split,
+    prepare_features,
     scale_amount_time,
+    time_of_day_features,
     train_test_split_stratified,
 )
 
@@ -128,3 +130,28 @@ def test_get_train_test_split_feeds_scaler_without_leakage(synthetic_df):
     assert np.allclose(scaler.mean_, train_mean.values)
     expected_test_scaled = (X_test[["Time", "Amount"]] - train_mean) / train_std
     assert np.allclose(X_test_scaled[["Time", "Amount"]].values, expected_test_scaled.values)
+
+
+def test_time_of_day_features_replace_time_by_a_circular_hour():
+    day = 24 * 3600
+    X = pd.DataFrame({"Time": [0.0, 6 * 3600, day - 60, day, day + 6 * 3600], "Amount": [1.0] * 5})
+    out = time_of_day_features(X)
+
+    assert "Time" not in out.columns and {"hour_sin", "hour_cos"} <= set(out.columns)
+    assert "Time" in X.columns  # o original fica intacto (ordena o split temporal)
+    hours = out[["hour_sin", "hour_cos"]].to_numpy()
+    # Mesma hora em dias diferentes = mesma feature.
+    assert np.allclose(hours[0], hours[3]) and np.allclose(hours[1], hours[4])
+    # 23h59 fica colada na meia-noite, não do outro lado da escala.
+    assert np.linalg.norm(hours[2] - hours[0]) < 0.01
+    assert np.linalg.norm(hours[1] - hours[0]) > 1.0
+
+
+def test_prepare_features_scales_amount_with_train_only_and_drops_time(synthetic_df):
+    X_train, X_test, _y_train, _y_test = get_train_test_split(synthetic_df)
+    X_train_p, X_test_p, scaler = prepare_features(X_train, X_test)
+
+    assert "Time" not in X_train_p.columns and "Time" not in X_test_p.columns
+    assert np.allclose(scaler.mean_, [X_train["Amount"].mean()])
+    expected = (X_test["Amount"] - X_train["Amount"].mean()) / X_train["Amount"].std(ddof=0)
+    assert np.allclose(X_test_p["Amount"], expected)

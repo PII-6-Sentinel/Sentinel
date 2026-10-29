@@ -39,6 +39,13 @@ ao benchmark três análises mais próximas da operação:
 python scripts/run_kaggle_benchmark.py --custo-revisao 5 --teste 0.2
 ```
 
+Os quatro modelos (baseline estatístico, Regressão Logística, Isolation
+Forest e Gradient Boosting) recebem a **hora do dia**, não o `Time` bruto:
+`Time` conta segundos desde o início da coleta e, no split temporal, todo o
+teste ficaria fora do intervalo visto no treino. Assim a queda do aleatório
+para o temporal mede a mudança nos dados, e não um artefato dessa coluna.
+Valores (`Amount`, custos) estão na moeda do dataset, o euro.
+
 Requer `data/raw/creditcard.csv` (README, seção 3). No relatório, o limiar
 de menor custo é calculado no próprio teste só para **descrever** a curva de
 custo; para **escolher** um limiar, calcule-o num período de validação

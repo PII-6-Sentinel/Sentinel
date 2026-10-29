@@ -24,6 +24,17 @@ def test_temporal_split_trains_on_the_past_and_tests_on_the_future(synthetic_df)
     assert "Class" not in X_train.columns
 
 
+def test_temporal_scores_ignore_raw_time(synthetic_df):
+    """`Time` só ordena o split: somar um número inteiro de dias a todas as
+    transações (a hora do dia não muda) não pode mudar nenhum escore. Com
+    o `Time` bruto como feature, mudaria — o modelo extrapolaria."""
+    shifted = synthetic_df.assign(Time=synthetic_df["Time"] + 3 * 24 * 3600)
+    _, scores, _, _ = model_scores_temporal(synthetic_df)
+    _, scores_shifted, _, _ = model_scores_temporal(shifted)
+    for name in scores:
+        assert np.allclose(scores[name], scores_shifted[name]), name
+
+
 def test_temporal_split_rejects_invalid_size(synthetic_df):
     with pytest.raises(ValueError):
         temporal_split(synthetic_df, test_size=1.0)
@@ -32,7 +43,7 @@ def test_temporal_split_rejects_invalid_size(synthetic_df):
 def test_compare_splits_reports_both_splits_for_every_model(synthetic_df):
     table = compare_splits(synthetic_df)
     assert set(table["split"]) == {"aleatório", "temporal"}
-    assert table.groupby("split")["modelo"].nunique().tolist() == [3, 3]
+    assert table.groupby("split")["modelo"].nunique().tolist() == [4, 4]
     assert table["pr_auc"].between(0, 1).all() and table["roc_auc"].between(0, 1).all()
 
 
@@ -74,7 +85,7 @@ def test_cost_curve_adds_review_and_missed_fraud_costs():
 def test_cost_optimal_threshold_alerts_until_the_frauds_pay_off():
     y, score, amount, _ = _toy()
     best = cost_optimal_threshold(cost_curve(y, score, amount, review_cost=5.0))
-    # alertar as 3 primeiras custa 15 e pega as duas fraudes (R$ 400)
+    # alertar as 3 primeiras custa 15 e pega as duas fraudes (€ 400)
     assert best["alertas"] == 3 and best["fn"] == 0 and best["custo_total"] == pytest.approx(15.0)
 
 

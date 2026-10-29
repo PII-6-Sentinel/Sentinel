@@ -12,7 +12,7 @@ Este módulo é deliberadamente separado de `src/models.py`:
 
 Nada aqui duplica lógica de `models.py`: reusa `train_all_models`,
 `fraud_score`, `calibrate_threshold_by_contamination` e `evaluate_at_threshold`
-tal como estão, e reusa `scale_amount_time` de `preprocessing.py` — a
+tal como estão, e reusa `prepare_features` de `preprocessing.py` — a
 mudança é só a ORDEM em que essas peças são chamadas (uma vez por fold, em
 vez de uma vez no treino inteiro).
 
@@ -48,7 +48,7 @@ from src.models import (
     fraud_score,
     train_all_models,
 )
-from src.preprocessing import scale_amount_time
+from src.preprocessing import prepare_features
 
 DEFAULT_N_SPLITS = 5
 DEFAULT_RANDOM_STATE = 42
@@ -148,16 +148,16 @@ def cross_validate_models(
     n_splits: int = DEFAULT_N_SPLITS,
     random_state: int = DEFAULT_RANDOM_STATE,
 ) -> dict[str, CVResult]:
-    """Validação cruzada estratificada dos três modelos, SÓ no treino.
+    """Validação cruzada estratificada dos modelos, SÓ no treino.
 
     Não recebe X_test/y_test — de propósito: não há como o conjunto de
     teste vazar para dentro desta função, porque ela nunca o enxerga.
 
     Para cada fold (treino do fold vs. validação do fold):
         1. ajusta um StandardScaler NOVO, só com o treino do fold
-           (`scale_amount_time`, mesma função usada no split externo —
+           (`prepare_features`, mesma função usada no split externo —
            nunca reusa o scaler ajustado no X_train completo);
-        2. treina os três modelos do zero nesse treino de fold
+        2. treina os modelos do zero nesse treino de fold
            (`train_all_models` — sem usar a taxa de fraude, igual ao
            treino "de verdade");
         3. calibra o threshold de cada modelo usando SÓ o escore do
@@ -169,7 +169,7 @@ def cross_validate_models(
     (um por fold) mais a média e o desvio-padrão — uma medida de quão
     ESTÁVEL cada modelo é entre diferentes recortes do treino, não uma
     substituição da avaliação no teste final (essa continua vindo de
-    `src.models.evaluate_model`, chamada uma única vez, em `app/pipeline.py`).
+    `src.models.evaluate_model`, chamada uma única vez sobre o teste).
     """
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
 
@@ -186,7 +186,7 @@ def cross_validate_models(
         # Scaler novo, ajustado só com o treino DESTE fold — nunca com
         # X_train inteiro (isso vazaria estatísticas do validation deste
         # fold, que faz parte do X_train completo, para dentro do treino).
-        X_fold_train_scaled, X_fold_val_scaled, _ = scale_amount_time(
+        X_fold_train_scaled, X_fold_val_scaled, _ = prepare_features(
             X_fold_train, X_fold_val
         )
 
@@ -224,12 +224,13 @@ def threshold_sweep(
 
     O intervalo do sweep é o intervalo OBSERVADO de `y_score` (mínimo ao
     máximo) — nunca assume que os escores estão entre 0 e 1. Isso importa
-    porque os três modelos do projeto produzem escores em escalas bem
+    porque os modelos do projeto produzem escores em escalas bem
     diferentes: `fraud_score()` (models.py) já normaliza a DIREÇÃO do
-    escore (maior = mais suspeito, igual para os três), mas não a escala
+    escore (maior = mais suspeito, igual para todos), mas não a escala
     — o Isolation Forest continua em unidades de escore de isolamento, o
     baseline em unidades de distância no espaço V1..V28, e só a Regressão
-    Logística fica naturalmente entre 0 e 1 (probabilidade). Esta função
+    Logística e o Gradient Boosting ficam naturalmente entre 0 e 1
+    (probabilidade). Esta função
     não introduz nenhuma normalização paralela: o `threshold` de cada
     linha do resultado está na mesma escala nativa de `y_score`.
     """

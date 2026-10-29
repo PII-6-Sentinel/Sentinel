@@ -15,7 +15,7 @@ from src.evaluation import (
 from src.models import apply_threshold, evaluate_at_threshold
 from src.preprocessing import split_features_target, train_test_split_stratified
 
-MODEL_NAMES = {"Baseline Estatístico", "Regressão Logística", "Isolation Forest"}
+MODEL_NAMES = {"Baseline Estatístico", "Regressão Logística", "Isolation Forest", "Gradient Boosting"}
 
 
 # ---------------------------------------------------------------------------
@@ -82,8 +82,8 @@ def test_threshold_calibrated_only_with_fold_train_scores(synthetic_df, monkeypa
 
     cross_validate_models(X_train, y_train)
 
-    # 5 folds x 3 modelos = 15 chamadas de calibração de threshold.
-    assert len(calls) == 15
+    # 5 folds x 4 modelos = 20 chamadas de calibração de threshold.
+    assert len(calls) == 20
 
     # Chamadas agrupadas em blocos de 3 (um por modelo), na ordem dos folds.
     for fold_idx, expected_size in enumerate(expected_fold_train_sizes):
@@ -159,7 +159,7 @@ def test_aggregate_cv_results_has_mean_and_std():
 
 
 # ---------------------------------------------------------------------------
-# 7. CV retorna resultado para os três modelos
+# 7. CV retorna resultado para todos os modelos
 # ---------------------------------------------------------------------------
 
 

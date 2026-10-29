@@ -392,10 +392,14 @@ def _build_customer_bundles(
             # Minuto único por cliente: dois estabelecimentos no MESMO minuto
             # (a até ~15 km um do outro) implicariam ~900 km/h — um falso
             # positivo de "viagem impossível" que não é comportamento real.
+            # Sem minuto livre em 10 tentativas, a compra é descartada (nunca
+            # repetida); com a seed padrão isso não acontece.
             for _attempt in range(10):
                 timestamp = _timestamp_on_day(rng, customer, day)
                 if timestamp not in used_minutes:
                     break
+            else:
+                continue
             used_minutes.add(timestamp)
 
             merchant = rng.choice(merchants_by_city[city_ref.city])
