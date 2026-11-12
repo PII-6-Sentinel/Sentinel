@@ -380,8 +380,11 @@ def apply_filters(
     profiles=None,
     amount_range: tuple[float, float] | None = None,
     splits=None,
+    statuses=None,
 ) -> pd.DataFrame:
-    """Filtros da tabela. `None` (ou lista vazia) em um critério = sem filtro."""
+    """Filtros da tabela. `None` (ou lista vazia) em um critério = sem filtro.
+    `statuses` exige a coluna `status` (`decisions.with_status`).
+    """
     mask = pd.Series(True, index=frame.index)
     for column, values in (
         ("level", levels),
@@ -389,6 +392,7 @@ def apply_filters(
         ("customer_id", customers),
         ("profile", profiles),
         ("conjunto", splits),
+        ("status", statuses),
     ):
         if values:
             mask &= frame[column].isin(list(values))
