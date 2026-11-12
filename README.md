@@ -33,6 +33,7 @@ Sentinel/
 │   ├── risk_analysis.py        # camada fina sobre src/risk/ para a Central (sem Streamlit, sem cache)
 │   ├── simulator.py            # camada fina do Simulador: contexto do cliente, cenários, raciocínio (sem Streamlit)
 │   ├── live_monitor.py         # camada fina do Monitor ao Vivo: fluxo, veredito × rótulo, resumo (sem Streamlit)
+│   ├── decisions.py            # decisão do analista (aprovar/bloquear), status e fila (sem Streamlit)
 │   ├── ui.py                   # formatação pt-BR, cartões, mapa e estilo de tabela compartilhados
 │   └── views/                  # uma página por módulo
 │       ├── overview.py         # PRODUTO: Visão Geral (proposta do Sentinel)
@@ -53,7 +54,7 @@ Sentinel/
 │   ├── models.py               # baseline estatístico, regressão logística, isolation forest, gradient boosting
 │   ├── evaluation.py            # validação cruzada, varredura de threshold
 │   └── synthetic/                # domínio sintético — independente do Kaggle
-│       ├── models.py             # ORM SQLAlchemy (Customer, Card, Device, Merchant, Transaction)
+│       ├── models.py             # ORM SQLAlchemy (Customer, Card, Device, Merchant, Transaction, AnalystDecision)
 │       ├── geo_reference.py      # cidades reais (lat/lon) + distância geodésica local
 │       ├── generator.py          # gerador determinístico (perfis + 6 cenários de fraude)
 │       ├── live_generator.py     # gerador ao vivo: uma transação nova por vez, com o rótulo real
@@ -268,6 +269,27 @@ vai acontecer) e não há `st.cache_*` rodando a análise. Só o clique em
 No painel de investigação, a média e a janela de horário do cliente são as
 **estimadas das compras anteriores** àquela transação, as mesmas com que o
 motor a comparou (vazias nas primeiras compras do cliente).
+
+**Decisão do analista — o motor recomenda, o analista decide.** O painel de
+investigação tem os botões **Aprovar transação**, **Bloquear transação** e
+**Desfazer decisão**, com uma observação opcional. A seção **Fila do
+analista** reúne o que o motor não aprovou e ainda espera decisão (da mais
+arriscada para a menos), com "Abrir próxima da fila" e "Ver fila na tabela".
+A tabela ganha a coluna e o filtro **Status**:
+
+| Recomendação do motor | Sem decisão do analista | Com decisão |
+|---|---|---|
+| aprovar | Aprovada automaticamente | Aprovada / Bloqueada pelo analista |
+| revisar | Aguardando revisão (fila) | Aprovada / Bloqueada pelo analista |
+| bloquear | Bloqueada preventivamente (fila) | Aprovada / Bloqueada pelo analista |
+
+As decisões ficam gravadas no banco, na tabela `analyst_decisions`, com a
+recomendação e o Risk Score que o analista viu, a observação e a data. As
+transações e o rótulo da simulação nunca são alterados, e decidir não
+reexecuta a análise. A tabela é criada sob demanda, então um banco gerado
+antes dela funciona sem regenerar; `generate_mock_data.py --force` apaga as
+decisões junto com o banco. Lógica em `app/decisions.py`, testada em
+`tests/test_app_decisions.py`.
 
 A análise treina o ML nos clientes de treino, escolhe o peso e calibra as
 faixas nos de validação (as mesmas regras de `src/risk/report.py`) e aplica o
