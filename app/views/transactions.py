@@ -10,13 +10,36 @@ quem avalia).
 O resultado fica em `st.session_state`, então filtros e seleção de linha
 reexecutam apenas o script (barato), nunca a análise.
 
-Toda a lógica vive em `app/risk_analysis.py` (que usa `src/risk/`); aqui
-só há orquestração e exibição (componentes visuais em `app/ui.py`).
+O motor RECOMENDA; o analista DECIDE: o painel de investigação tem os
+botões Aprovar / Bloquear, e a "Fila do analista" reúne o que o motor não
+aprovou e ainda espera decisão. As decisões ficam gravadas no banco, numa
+tabela própria (`app/decisions.py`) — a análise em si continua sem gravar
+nada, e decidir não a reexecuta.
+
+Toda a lógica vive em `app/risk_analysis.py` (que usa `src/risk/`) e em
+`app/decisions.py`; aqui só há orquestração e exibição (componentes visuais
+em `app/ui.py`).
 """
 
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from decisions import (
+    DECISION_APPROVED,
+    DECISION_BLOCKED,
+    QUEUE_STATUSES,
+    STATUS_ANALYST_APPROVED,
+    STATUS_ANALYST_BLOCKED,
+    STATUS_PENDING_REVIEW,
+    STATUS_PREVENTIVE_BLOCK,
+    STATUSES,
+    load_decisions,
+    next_in_queue,
+    record_decision,
+    status_counts,
+    undo_decision,
+    with_status,
+)
 from risk_analysis import (
     ACTIONS,
     LEVELS,
@@ -69,6 +92,7 @@ from src.risk.engine import ACTION_BY_LEVEL, ACTION_DESCRIPTION
 
 RESULT_KEY = "risk_analysis"
 RUN_FLAG = "tx_run_requested"
+DECISION_MSG_KEY = "tx_decision_msg"
 SIMULATION_NOTICE = PROTOTYPE_NOTICE
 
 SCENARIO_LABEL = {
@@ -280,7 +304,7 @@ def _risk_map(result: AnalysisResult) -> go.Figure:
 
 
 def _investigate_callback(transaction_id: int) -> None:
-    """Botão "Investigar" de um caso suspeito: preenche a busca por ID."""
+    """Botão "Investigar" (ou "Abrir próxima da fila"): preenche a busca por ID."""
     st.session_state["tx_lookup"] = str(transaction_id)
 
 
@@ -326,12 +350,64 @@ def _render_dashboard(result: AnalysisResult) -> None:
 
 
 # ----------------------------------------------------------------------
+# fila do analista: o motor recomenda, o analista decide
+# ----------------------------------------------------------------------
+
+
+def _show_queue_in_table() -> None:
+    """Filtra a tabela para a fila (de todos os clientes, não só os de teste)."""
+    st.session_state["tx_f_status"] = list(QUEUE_STATUSES)
+    st.session_state["tx_f_split"] = []
+
+
+def _render_queue(frame: pd.DataFrame) -> None:
+    counts = status_counts(frame)
+    pending = sum(counts[s] for s in QUEUE_STATUSES)
+    decided = counts[STATUS_ANALYST_APPROVED] + counts[STATUS_ANALYST_BLOCKED]
+
+    st.subheader("Fila do analista")
+    st.caption(
+        "O Sentinel recomenda; o analista decide. Toda transação que o motor não aprovou espera aqui uma decisão "
+        "final — aprovar ou bloquear —, da mais arriscada para a menos. A decisão fica gravada no banco, numa "
+        "tabela própria: a transação original não muda."
+    )
+    cards = [
+        card(
+            "Na fila",
+            fmt_int(pending),
+            f"{fmt_int(counts[STATUS_PENDING_REVIEW])} aguardando revisão · "
+            f"{fmt_int(counts[STATUS_PREVENTIVE_BLOCK])} bloqueadas preventivamente",
+            LEVEL_COLORS["médio"],
+            size="sm",
+        ),
+        card("Aprovadas pelo analista", fmt_int(counts[STATUS_ANALYST_APPROVED]), "liberadas após revisão", LEVEL_COLORS["baixo"], size="sm"),
+        card("Bloqueadas pelo analista", fmt_int(counts[STATUS_ANALYST_BLOCKED]), "bloqueio confirmado", LEVEL_COLORS["alto"], size="sm"),
+        card("Decididas", fmt_int(decided), f"de {fmt_int(pending + decided)} que passaram pelo analista", size="sm"),
+    ]
+    for col, html in zip(st.columns(4, gap="small"), cards):
+        col.markdown(html, unsafe_allow_html=True)
+
+    next_id = next_in_queue(frame)
+    open_col, table_col, _ = st.columns([0.3, 0.25, 0.45])
+    open_col.button(
+        "Abrir próxima da fila",
+        type="primary",
+        key="tx_queue_next",
+        on_click=_investigate_callback,
+        args=(next_id,),
+        disabled=next_id is None,
+    )
+    table_col.button("Ver fila na tabela", key="tx_queue_table", on_click=_show_queue_in_table)
+    if next_id is None:
+        st.success("Fila vazia: todas as transações sinalizadas já têm decisão do analista.", icon=":material/task_alt:")
+
+
+# ----------------------------------------------------------------------
 # tabela investigável
 # ----------------------------------------------------------------------
 
 
-def _render_filters(result: AnalysisResult):
-    frame = result.frame
+def _render_filters(frame: pd.DataFrame):
     customers = frame[["customer_id", "customer"]].drop_duplicates().sort_values("customer")
     labels = {int(r.customer_id): f"{r.customer} (#{r.customer_id})" for r in customers.itertuples()}
     lo, hi = float(frame["amount"].min()), float(frame["amount"].max())
@@ -357,6 +433,14 @@ def _render_filters(result: AnalysisResult):
             "Limpe o filtro para ver todos.",
         )
         amount = c6.slider("Faixa de valor (R$)", lo, hi, (lo, hi), step=1.0, key="tx_f_amount")
+        statuses = st.multiselect(
+            "Status",
+            STATUSES,
+            key="tx_f_status",
+            placeholder="Todos",
+            help="Recomendação do motor somada à decisão do analista. \"Ver fila na tabela\" seleciona os dois "
+            "status que esperam o analista.",
+        )
 
     return apply_filters(
         frame,
@@ -366,6 +450,7 @@ def _render_filters(result: AnalysisResult):
         profiles=profiles,
         amount_range=amount,
         splits=splits,
+        statuses=statuses,
     )
 
 
@@ -384,6 +469,7 @@ def _render_table(view):
             "Risk Score": view["risk_score"].to_numpy(),
             "Nível": view["level"].to_numpy(),
             "Ação": view["action"].to_numpy(),
+            "Status": view["status"].to_numpy(),
             "Conjunto": view["conjunto"].to_numpy(),
         }
     )
@@ -437,11 +523,78 @@ def _score_card(a, cfg) -> str:
     )
 
 
-def _render_investigation(result: AnalysisResult, transaction_id: int) -> None:
+def _decide(transaction_id: int, decision: str, recommended_action: str, risk_score: int) -> None:
+    """Grava a decisão e mantém o painel NESTA transação: com filtro de status
+    ativo, a linha decidida sai da tabela e a seleção apontaria para outra.
+    """
+    note = st.session_state.get(f"tx_note_{transaction_id}", "")
+    record_decision(resolve_db_path(), transaction_id, decision, recommended_action, risk_score, note)
+    st.session_state["tx_lookup"] = str(transaction_id)
+    st.session_state[DECISION_MSG_KEY] = f"Transação #{transaction_id} {decision} pelo analista."
+
+
+def _undo(transaction_id: int) -> None:
+    undo_decision(resolve_db_path(), transaction_id)
+    st.session_state["tx_lookup"] = str(transaction_id)
+    st.session_state[DECISION_MSG_KEY] = f"Decisão da transação #{transaction_id} desfeita: vale de novo a recomendação do motor."
+
+
+def _render_decision(transaction_id: int, row, a, decision, next_id: int | None) -> None:
+    """Recomendação do motor, status atual e os botões da decisão final.
+    `decision` é a linha gravada em `analyst_decisions` (ou None).
+    """
+    with st.container(key="sx-panel-decision"):
+        st.markdown('<div class="sx-panel-title">Decisão do analista</div>', unsafe_allow_html=True)
+        st.markdown(f"Recomendação do Sentinel: **{ACTION_LABEL[a.action]}** · Status: **{row['status']}**")
+        if decision is not None:
+            note = f" Observação: “{decision['note']}”." if isinstance(decision["note"], str) else ""
+            st.caption(
+                f"Decidida em {pd.Timestamp(decision['decided_at']):%d/%m/%Y às %H:%M}, com Risk Score "
+                f"{decision['risk_score']} e recomendação \"{ACTION_LABEL[decision['recommended_action']]}\".{note}"
+            )
+        st.text_input(
+            "Observação (opcional)",
+            key=f"tx_note_{transaction_id}",
+            max_chars=500,
+            placeholder="ex.: cliente confirmou a compra por telefone",
+        )
+        approve_col, block_col, undo_col = st.columns(3, gap="small")
+        approve_col.button(
+            "Aprovar transação",
+            key="tx_approve",
+            on_click=_decide,
+            args=(transaction_id, DECISION_APPROVED, a.action, a.risk_score),
+            disabled=row["decision"] == DECISION_APPROVED,
+            width="stretch",
+        )
+        block_col.button(
+            "Bloquear transação",
+            key="tx_block",
+            type="primary",
+            on_click=_decide,
+            args=(transaction_id, DECISION_BLOCKED, a.action, a.risk_score),
+            disabled=row["decision"] == DECISION_BLOCKED,
+            width="stretch",
+        )
+        undo_col.button(
+            "Desfazer decisão",
+            key="tx_undo",
+            on_click=_undo,
+            args=(transaction_id,),
+            disabled=row["decision"] is None,
+            width="stretch",
+        )
+        if next_id is not None:
+            st.button("Próxima da fila →", key="tx_panel_next", on_click=_investigate_callback, args=(next_id,))
+
+
+def _render_investigation(result: AnalysisResult, frame: pd.DataFrame, decisions: pd.DataFrame, transaction_id: int) -> None:
     inv = investigate(result, transaction_id)
     row, a = inv.row, inv.assessment
     color = LEVEL_COLORS[a.level]
     cfg = result.engine.config
+    status_row = frame[frame["transaction_id"] == transaction_id].iloc[0]
+    decision = decisions.loc[transaction_id] if transaction_id in decisions.index else None
 
     st.subheader(f"Investigação da transação #{transaction_id}")
     st.markdown(f"Transação #{transaction_id} · {esc(row['customer'])}")
@@ -455,6 +608,7 @@ def _render_investigation(result: AnalysisResult, transaction_id: int) -> None:
     left, right = st.columns(2, gap="medium")
     with left:
         st.markdown(_score_card(a, cfg), unsafe_allow_html=True)
+        _render_decision(transaction_id, status_row, a, decision, next_in_queue(frame, exclude=transaction_id))
         st.markdown(panel("Motivos do score", reasons_list(a.reasons, color)), unsafe_allow_html=True)
         truth = "fraude" if row["is_fraud"] else "legítima"
         scenario = f" — {SCENARIO_LABEL.get(row['fraud_scenario'], row['fraud_scenario'])}" if row["is_fraud"] else ""
@@ -613,10 +767,15 @@ def render():
         f"Atenção: {SIMULATION_NOTICE}."
     )
 
-    problem = database_problem(resolve_db_path())
+    db_path = resolve_db_path()
+    problem = database_problem(db_path)
     if problem:
         st.error(problem, icon=":material/database_off:")
         return
+
+    message = st.session_state.pop(DECISION_MSG_KEY, None)
+    if message:
+        st.toast(message, icon=":material/gavel:")
 
     run = st.session_state.pop(RUN_FLAG, False)
     result = st.session_state.get(RESULT_KEY)
@@ -641,10 +800,15 @@ def render():
     _render_summary(result)
     _render_dashboard(result)
 
+    # Decisões: lidas do banco a cada reexecução (consulta pequena); a análise não roda de novo.
+    decisions = load_decisions(db_path)
+    frame = with_status(result.frame, decisions)
+    _render_queue(frame)
+
     st.subheader("Transações")
-    view = _render_filters(result).reset_index(drop=True)
+    view = _render_filters(frame).reset_index(drop=True)
     st.caption(
-        f"Mostrando {fmt_int(len(view))} de {fmt_int(len(result.frame))} transações, ordenadas por Risk Score "
+        f"Mostrando {fmt_int(len(view))} de {fmt_int(len(frame))} transações, ordenadas por Risk Score "
         "decrescente. **Selecione uma linha** para investigar."
     )
     selected_pos = _render_table(view)
@@ -662,7 +826,7 @@ def render():
         transaction_id = int(view.iloc[selected_pos]["transaction_id"])
 
     if transaction_id is not None:
-        _render_investigation(result, transaction_id)
+        _render_investigation(result, frame, decisions, transaction_id)
     else:
         st.info("Selecione uma transação na tabela para abrir o painel de investigação.", icon=":material/search:")
 
