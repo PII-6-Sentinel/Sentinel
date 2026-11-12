@@ -191,7 +191,7 @@ def test_summary_cards_match_the_analysis(analyzed):
 def test_table_is_sorted_by_risk_score_and_has_the_requested_columns(analyzed):
     table = _table(analyzed)
     assert table.columns.tolist() == [
-        "ID", "Cliente", "Valor", "Cidade", "Canal", "Data/hora", "Risk Score", "Nível", "Ação", "Conjunto",
+        "ID", "Cliente", "Valor", "Cidade", "Canal", "Data/hora", "Risk Score", "Nível", "Ação", "Status", "Conjunto",
     ]
     assert len(table) == len(analyzed.session_state["risk_analysis"].frame)
     assert table["Risk Score"].is_monotonic_decreasing
@@ -200,7 +200,7 @@ def test_table_is_sorted_by_risk_score_and_has_the_requested_columns(analyzed):
 
 def test_every_filter_widget_is_there(analyzed):
     assert {m.key for m in analyzed.multiselect} == {
-        "tx_f_level", "tx_f_action", "tx_f_profile", "tx_f_customer", "tx_f_split",
+        "tx_f_level", "tx_f_action", "tx_f_profile", "tx_f_customer", "tx_f_split", "tx_f_status",
     }
     assert [s.key for s in analyzed.slider] == ["tx_f_amount"]
 

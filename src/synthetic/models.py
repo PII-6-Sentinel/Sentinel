@@ -171,3 +171,25 @@ class Transaction(Base):
     card: Mapped["Card"] = relationship()
     merchant: Mapped["Merchant"] = relationship()
     device: Mapped["Device"] = relationship()
+
+
+class AnalystDecision(Base):
+    """Decisão final do analista de risco sobre uma transação (aprovar ou
+    bloquear), tomada na Central de Transações a partir da recomendação do
+    motor. Tabela separada de `transactions` de propósito: a transação e o
+    rótulo da simulação nunca são alterados; a decisão é um registro da
+    operação, com a recomendação e o Risk Score que o analista viu.
+
+    Uma linha por transação (a decisão vigente); desfazer apaga a linha.
+    O gerador não popula esta tabela — ela nasce vazia.
+    """
+
+    __tablename__ = "analyst_decisions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    transaction_id: Mapped[int] = mapped_column(ForeignKey("transactions.id"), unique=True)
+    decision: Mapped[str] = mapped_column(String(20))  # "aprovada" ou "bloqueada"
+    recommended_action: Mapped[str] = mapped_column(String(20))  # o que o motor recomendou
+    risk_score: Mapped[int] = mapped_column(Integer)  # Risk Score exibido no momento da decisão
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    decided_at: Mapped[datetime] = mapped_column(DateTime)
