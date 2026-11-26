@@ -96,8 +96,8 @@ hr { border-color: var(--divider) !important; }
   width: 100%; padding: 9px 12px; margin: 0; border-radius: var(--radius-field);
   cursor: pointer; transition: background .15s ease; box-sizing: border-box;
 }
-/* esconde a bolinha do radio (o item inteiro é o alvo) */
-[data-testid="stSidebar"] [data-testid="stRadioOption"] > div > div > div:first-child { display: none; }
+/* esconde a bolinha do radio (o item inteiro é o alvo): é o bloco logo antes do texto */
+[data-testid="stSidebar"] [data-testid="stRadioOption"] div:has(+ [data-testid="stMarkdownContainer"]) { display: none; }
 [data-testid="stSidebar"] [data-testid="stRadioOption"] p {
   font-size: 15px; line-height: 22px; font-weight: 500; color: var(--text-secondary); white-space: nowrap;
 }
