@@ -256,8 +256,8 @@ def _daily_chart(result: AnalysisResult) -> go.Figure:
         barmode="stack",
         bargap=0.25,
         height=300,
-        margin=dict(t=8, b=8, l=8, r=8),
-        legend=dict(orientation="h", y=-0.15, x=0),
+        margin=dict(t=40, b=8, l=8, r=8),  # o topo guarda o lugar da legenda
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),  # acima, longe das datas
         yaxis=dict(automargin=True, title=None),
     )
     fig.update_xaxes(tickformat="%d/%m")
