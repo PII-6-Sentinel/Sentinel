@@ -91,7 +91,10 @@ hr { border-color: var(--divider) !important; }
 .sx-foot { font-size: 12px; line-height: 16px; color: var(--text-secondary); padding: 8px 8px 0 8px; }
 
 /* navegação (st.radio) como lista de itens */
-[data-testid="stSidebar"] [data-testid="stRadioGroup"] { gap: 2px; }
+/* o Streamlit encolhe o grupo até o maior rótulo; aqui o destaque ocupa a barra toda */
+[data-testid="stSidebar"] [data-testid="stElementContainer"]:has(> [data-testid="stRadio"]),
+[data-testid="stSidebar"] [data-testid="stRadio"] { width: 100% !important; }
+[data-testid="stSidebar"] [data-testid="stRadioGroup"] { gap: 2px; width: 100%; align-items: stretch; }
 [data-testid="stSidebar"] [data-testid="stRadioOption"] {
   width: 100%; padding: 9px 12px; margin: 0; border-radius: var(--radius-field);
   cursor: pointer; transition: background .15s ease; box-sizing: border-box;
