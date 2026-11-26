@@ -395,6 +395,13 @@ hr { border-color: var(--divider) !important; }
 
 /* ---------- Central: os casos mais suspeitos ---------- */
 .sx-section-title { font-size: 17px; line-height: 24px; font-weight: 600; color: var(--text); margin: 8px 0 12px; }
+/* a linha dos cartões quebra quando eles ficariam estreitos demais, em vez de espremê-los */
+[data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"] .sx-suspect) {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(min(180px, 100%), 1fr));
+}
+[data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"] .sx-suspect) > [data-testid="stColumn"] {
+  width: auto !important; min-width: 0 !important;
+}
 .sx-suspect {
   background: var(--surface); border: 1px solid var(--border); border-top: 3px solid var(--lvl);
   border-radius: var(--radius-card); padding: 18px; min-height: 262px; box-sizing: border-box;
