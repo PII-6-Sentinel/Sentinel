@@ -91,13 +91,16 @@ hr { border-color: var(--divider) !important; }
 .sx-foot { font-size: 12px; line-height: 16px; color: var(--text-secondary); padding: 8px 8px 0 8px; }
 
 /* navegação (st.radio) como lista de itens */
-[data-testid="stSidebar"] [data-testid="stRadioGroup"] { gap: 2px; }
+/* o Streamlit encolhe o grupo até o maior rótulo; aqui o destaque ocupa a barra toda */
+[data-testid="stSidebar"] [data-testid="stElementContainer"]:has(> [data-testid="stRadio"]),
+[data-testid="stSidebar"] [data-testid="stRadio"] { width: 100% !important; }
+[data-testid="stSidebar"] [data-testid="stRadioGroup"] { gap: 2px; width: 100%; align-items: stretch; }
 [data-testid="stSidebar"] [data-testid="stRadioOption"] {
   width: 100%; padding: 9px 12px; margin: 0; border-radius: var(--radius-field);
   cursor: pointer; transition: background .15s ease; box-sizing: border-box;
 }
-/* esconde a bolinha do radio (o item inteiro é o alvo) */
-[data-testid="stSidebar"] [data-testid="stRadioOption"] > div > div > div:first-child { display: none; }
+/* esconde a bolinha do radio (o item inteiro é o alvo): é o bloco logo antes do texto */
+[data-testid="stSidebar"] [data-testid="stRadioOption"] div:has(+ [data-testid="stMarkdownContainer"]) { display: none; }
 [data-testid="stSidebar"] [data-testid="stRadioOption"] p {
   font-size: 15px; line-height: 22px; font-weight: 500; color: var(--text-secondary); white-space: nowrap;
 }
@@ -375,7 +378,8 @@ hr { border-color: var(--divider) !important; }
 .sx-demo-who { font-size: 18px; font-weight: 600; color: var(--text); margin-top: 14px; }
 .sx-demo-what { font-size: 14px; line-height: 21px; color: var(--text-secondary); margin-top: 4px; }
 .sx-demo-verdict {
-  display: flex; align-items: center; gap: 20px; margin: 20px 0 16px; padding: 16px 20px;
+  /* no cartão estreito a ação desce para baixo da nota, em vez de sair da caixa */
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; margin: 20px 0 16px; padding: 16px 20px;
   border-radius: var(--radius-cell); background: rgba(255,107,87,0.12);
 }
 .sx-demo-score { font-size: 52px; line-height: 48px; font-weight: 700; letter-spacing: -0.03em; color: var(--lvl); }
@@ -395,6 +399,13 @@ hr { border-color: var(--divider) !important; }
 
 /* ---------- Central: os casos mais suspeitos ---------- */
 .sx-section-title { font-size: 17px; line-height: 24px; font-weight: 600; color: var(--text); margin: 8px 0 12px; }
+/* a linha dos cartões quebra quando eles ficariam estreitos demais, em vez de espremê-los */
+[data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"] .sx-suspect) {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(min(180px, 100%), 1fr));
+}
+[data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"] .sx-suspect) > [data-testid="stColumn"] {
+  width: auto !important; min-width: 0 !important;
+}
 .sx-suspect {
   background: var(--surface); border: 1px solid var(--border); border-top: 3px solid var(--lvl);
   border-radius: var(--radius-card); padding: 18px; min-height: 262px; box-sizing: border-box;
